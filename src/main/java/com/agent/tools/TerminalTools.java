@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Scanner;
@@ -346,6 +347,82 @@ public class TerminalTools {
         } catch (Exception e) {
             log.error("Failed to read file lines: " + path, e);
             return "Error: Could not read file lines: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Replaces a specific range of lines in an existing file with new content after obtaining human confirmation.
+     *
+     * @param path       target file path
+     * @param startLine  1-based start line index
+     * @param endLine    1-based end line index
+     * @param newContent new string content to insert at the targeted line range
+     * @return confirmation of successful patch, or denial message
+     */
+    @Tool("Replace specific lines in an existing file with new content. Use this to patch code or text without rewriting the whole file.")
+    public String replaceLinesInFile(
+            @P("path to file") String path,
+            @P("1-based start line number to replace") int startLine,
+            @P("1-based end line number to replace") int endLine,
+            @P("new content to insert") String newContent) {
+        if (path == null || path.isBlank()) {
+            return "Error: File path cannot be empty.";
+        }
+        if (startLine < 1 || endLine < startLine) {
+            return "Error: Invalid line range: startLine=" + startLine + ", endLine=" + endLine;
+        }
+
+        log.warn("HITL Intercept: Agent requested patch on lines {}-{} in '{}'", startLine, endLine, path);
+
+        System.out.println("\n[SECURITY] Agent requested to patch lines " + startLine + " to " + endLine + " in: " + path);
+        System.out.print("Allow patch? (Y/N): ");
+        System.out.flush();
+
+        String confirmation = "";
+        if (consoleScanner.hasNextLine()) {
+            confirmation = consoleScanner.nextLine().trim();
+        }
+
+        if (!"Y".equalsIgnoreCase(confirmation)) {
+            log.info("HITL Intercept: User rejected file patch ('{}')", confirmation);
+            return "User denied file patch.";
+        }
+
+        log.info("HITL Intercept: User approved file patch. Applying patch to disk...");
+
+        try {
+            Path targetPath = Paths.get(path);
+            if (!Files.exists(targetPath)) {
+                return "Error: File does not exist: " + path;
+            }
+            if (Files.isDirectory(targetPath)) {
+                return "Error: Path is a directory, not a file: " + path;
+            }
+
+            List<String> lines = new ArrayList<>(Files.readAllLines(targetPath, StandardCharsets.UTF_8));
+            if (startLine > lines.size()) {
+                return "Error: startLine " + startLine + " exceeds file line count (" + lines.size() + ")";
+            }
+
+            int effectiveEndLine = Math.min(endLine, lines.size());
+
+            // Remove existing lines in range [startLine - 1, effectiveEndLine)
+            lines.subList(startLine - 1, effectiveEndLine).clear();
+
+            // Insert newContent at startLine - 1
+            if (newContent != null && !newContent.isEmpty()) {
+                String[] replacementLines = newContent.split("\\r?\\n", -1);
+                for (int i = 0; i < replacementLines.length; i++) {
+                    lines.add(startLine - 1 + i, replacementLines[i]);
+                }
+            }
+
+            Files.write(targetPath, lines, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            return "Successfully patched lines " + startLine + " to " + endLine + " in " + path;
+
+        } catch (IOException e) {
+            log.error("Failed to patch file lines: " + path, e);
+            return "Error: Could not patch file lines: " + e.getMessage();
         }
     }
 }

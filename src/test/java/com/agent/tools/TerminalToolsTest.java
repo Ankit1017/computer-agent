@@ -8,6 +8,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Scanner;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -139,5 +140,53 @@ class TerminalToolsTest {
 
         String result = tools.readFileLines(logFile.toString(), 1, 202);
         assertThat(result).isEqualTo("Error: Line range too large. Request 200 lines or fewer.");
+    }
+
+    @Test
+    @DisplayName("Should surgically replace targeted lines when user approves with 'Y'")
+    void shouldPatchFileLinesWhenApproved(@TempDir Path tempDir) throws IOException {
+        Path configFile = tempDir.resolve("config.yml");
+        Files.writeString(configFile, "server: localhost\nport: 8080\ndebug: false\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.replaceLinesInFile(configFile.toString(), 2, 2, "port: 9090");
+        assertThat(result).contains("Successfully patched lines 2 to 2");
+
+        List<String> updatedLines = Files.readAllLines(configFile);
+        assertThat(updatedLines).containsExactly("server: localhost", "port: 9090", "debug: false");
+    }
+
+    @Test
+    @DisplayName("Should deny patching lines when user enters 'N'")
+    void shouldDenyPatchWhenRejected(@TempDir Path tempDir) throws IOException {
+        Path configFile = tempDir.resolve("config.yml");
+        Files.writeString(configFile, "server: localhost\nport: 8080\ndebug: false\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("N\n".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.replaceLinesInFile(configFile.toString(), 2, 2, "port: 9090");
+        assertThat(result).isEqualTo("User denied file patch.");
+
+        List<String> unchangedLines = Files.readAllLines(configFile);
+        assertThat(unchangedLines).containsExactly("server: localhost", "port: 8080", "debug: false");
+    }
+
+    @Test
+    @DisplayName("Should replace line range with multi-line content")
+    void shouldPatchMultipleLinesWithExpansion(@TempDir Path tempDir) throws IOException {
+        Path configFile = tempDir.resolve("config.yml");
+        Files.writeString(configFile, "server: localhost\nport: 8080\ndebug: false\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.replaceLinesInFile(configFile.toString(), 2, 3, "port: 9090\nssl: true\ndebug: true");
+        assertThat(result).contains("Successfully patched lines 2 to 3");
+
+        List<String> updatedLines = Files.readAllLines(configFile);
+        assertThat(updatedLines).containsExactly("server: localhost", "port: 9090", "ssl: true", "debug: true");
     }
 }
