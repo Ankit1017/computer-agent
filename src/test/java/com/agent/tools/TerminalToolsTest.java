@@ -86,4 +86,58 @@ class TerminalToolsTest {
         assertThat(result).isEqualTo("User denied file write.");
         assertThat(Files.exists(target)).isFalse();
     }
+
+    @Test
+    @DisplayName("Should search directory and return files containing the keyword")
+    void shouldSearchDirectoryForKeyword(@TempDir Path tempDir) throws IOException {
+        Path matchFile = tempDir.resolve("app.log");
+        Files.writeString(matchFile, "Line 1\nTarget keyword CRITICAL_ERROR found\nLine 3");
+
+        Path nonMatchFile = tempDir.resolve("other.log");
+        Files.writeString(nonMatchFile, "Line 1\nAll clear\nLine 3");
+
+        Path binaryFile = tempDir.resolve("image.png");
+        Files.writeString(binaryFile, "CRITICAL_ERROR in binary");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.searchDirectory(tempDir.toString(), "CRITICAL_ERROR");
+        assertThat(result).contains("app.log");
+        assertThat(result).doesNotContain("other.log");
+        assertThat(result).doesNotContain("image.png");
+    }
+
+    @Test
+    @DisplayName("Should read specific range of lines with line numbers prepended")
+    void shouldReadFileLinesWithLineNumbers(@TempDir Path tempDir) throws IOException {
+        Path logFile = tempDir.resolve("test.log");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i <= 50; i++) {
+            sb.append("This is line ").append(i).append("\n");
+        }
+        Files.writeString(logFile, sb.toString());
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.readFileLines(logFile.toString(), 30, 35);
+        assertThat(result).contains("30: This is line 30");
+        assertThat(result).contains("35: This is line 35");
+        assertThat(result).doesNotContain("29: This is line 29");
+        assertThat(result).doesNotContain("36: This is line 36");
+    }
+
+    @Test
+    @DisplayName("Should reject line range exceeding 200 lines")
+    void shouldRejectLineRangeExceeding200(@TempDir Path tempDir) throws IOException {
+        Path logFile = tempDir.resolve("large.log");
+        Files.writeString(logFile, "sample content");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.readFileLines(logFile.toString(), 1, 202);
+        assertThat(result).isEqualTo("Error: Line range too large. Request 200 lines or fewer.");
+    }
 }

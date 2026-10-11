@@ -13,8 +13,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.List;
 import java.util.Objects;
 import java.util.Scanner;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -28,6 +30,15 @@ public class TerminalTools {
     private static final Logger log = LoggerFactory.getLogger(TerminalTools.class);
     private static final int MAX_FILE_READ_CHARACTERS = 3000;
     private static final long PROCESS_TIMEOUT_SECONDS = 30;
+    private static final int MAX_SEARCH_DEPTH = 3;
+    private static final int MAX_SEARCH_MATCHES = 20;
+    private static final int MAX_LINE_RANGE = 200;
+
+    private static final Set<String> BINARY_EXTENSIONS = Set.of(
+            ".jar", ".class", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
+            ".exe", ".dll", ".so", ".dylib", ".bin", ".zip", ".tar", ".gz",
+            ".pdf", ".woff", ".woff2", ".ttf", ".eot"
+    );
 
     private final Scanner consoleScanner;
 
@@ -218,6 +229,123 @@ public class TerminalTools {
         } catch (IOException e) {
             log.error("Failed to write file: " + path, e);
             return "Error: Could not write file: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Searches all text files in a directory for a specific keyword up to depth 3.
+     *
+     * @param directoryPath target directory to search
+     * @param keyword       string keyword to search for
+     * @return formatted list of matching file paths
+     */
+    @Tool("Search all text files in a directory for a specific keyword. Returns a list of files containing the keyword.")
+    public String searchDirectory(
+            @P("directory path to search") String directoryPath,
+            @P("keyword to search for within text files") String keyword) {
+        if (directoryPath == null || directoryPath.isBlank()) {
+            directoryPath = ".";
+        }
+        if (keyword == null || keyword.isBlank()) {
+            return "Error: Search keyword cannot be empty.";
+        }
+
+        log.info("Tool Call: searchDirectory(directoryPath='{}', keyword='{}')", directoryPath, keyword);
+
+        try {
+            Path targetDir = Paths.get(directoryPath);
+            if (!Files.exists(targetDir)) {
+                return "Error: Directory path does not exist: " + directoryPath;
+            }
+            if (!Files.isDirectory(targetDir)) {
+                return "Error: Path is not a directory: " + directoryPath;
+            }
+
+            try (Stream<Path> stream = Files.walk(targetDir, MAX_SEARCH_DEPTH)) {
+                List<String> matches = stream
+                        .filter(Files::isRegularFile)
+                        .filter(p -> {
+                            String fileName = p.getFileName().toString().toLowerCase();
+                            return BINARY_EXTENSIONS.stream().noneMatch(fileName::endsWith);
+                        })
+                        .filter(p -> {
+                            try (Stream<String> lines = Files.lines(p, StandardCharsets.UTF_8)) {
+                                return lines.anyMatch(line -> line.contains(keyword));
+                            } catch (Exception ignored) {
+                                return false;
+                            }
+                        })
+                        .limit(MAX_SEARCH_MATCHES)
+                        .map(Path::toString)
+                        .collect(Collectors.toList());
+
+                if (matches.isEmpty()) {
+                    return "No text files found containing keyword: '" + keyword + "'";
+                }
+
+                return "Matching files found containing '" + keyword + "' (max " + MAX_SEARCH_MATCHES + "):\n"
+                        + matches.stream().map(m -> "- " + m).collect(Collectors.joining("\n"));
+            }
+        } catch (Exception e) {
+            log.error("Failed to search directory: " + directoryPath, e);
+            return "Error: Search failed: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Reads a specific range of lines from a file with line numbers prepended.
+     *
+     * @param path      path to file
+     * @param startLine 1-based start line index
+     * @param endLine   1-based end line index
+     * @return extracted lines with prepended line numbers, or error message
+     */
+    @Tool("Read a specific range of lines from a file. Use this to inspect large files safely.")
+    public String readFileLines(
+            @P("path to file") String path,
+            @P("1-based start line number") int startLine,
+            @P("1-based end line number") int endLine) {
+        if (path == null || path.isBlank()) {
+            return "Error: File path cannot be empty.";
+        }
+        if (startLine < 1 || endLine < startLine) {
+            return "Error: Invalid line range: startLine=" + startLine + ", endLine=" + endLine;
+        }
+        if ((endLine - startLine) > MAX_LINE_RANGE) {
+            return "Error: Line range too large. Request 200 lines or fewer.";
+        }
+
+        log.info("Tool Call: readFileLines(path='{}', startLine={}, endLine={})", path, startLine, endLine);
+
+        try {
+            Path targetPath = Paths.get(path);
+            if (!Files.exists(targetPath)) {
+                return "Error: File does not exist: " + path;
+            }
+            if (Files.isDirectory(targetPath)) {
+                return "Error: Path is a directory, not a file: " + path;
+            }
+
+            try (Stream<String> lines = Files.lines(targetPath, StandardCharsets.UTF_8)) {
+                List<String> slice = lines
+                        .skip(startLine - 1)
+                        .limit((long) endLine - startLine + 1)
+                        .collect(Collectors.toList());
+
+                if (slice.isEmpty()) {
+                    return "[No lines found in requested range " + startLine + "-" + endLine + "]";
+                }
+
+                StringBuilder sb = new StringBuilder();
+                int currentLine = startLine;
+                for (String line : slice) {
+                    sb.append(currentLine++).append(": ").append(line).append(System.lineSeparator());
+                }
+                return sb.toString().trim();
+            }
+        } catch (Exception e) {
+            log.error("Failed to read file lines: " + path, e);
+            return "Error: Could not read file lines: " + e.getMessage();
         }
     }
 }
