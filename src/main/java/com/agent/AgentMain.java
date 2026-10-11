@@ -1,6 +1,7 @@
 package com.agent;
 
 import com.agent.factory.OllamaModelFactory;
+import com.agent.tools.GitTools;
 import com.agent.tools.TerminalTools;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
@@ -12,14 +13,14 @@ import org.slf4j.LoggerFactory;
 import java.util.Scanner;
 
 /**
- * Milestone 2.1: Terminal & Filesystem Tools with Human-In-The-Loop Safety Interceptor.
+ * Phase 3, Milestone 3.3: Complex Git Workflows with Safe Truncation and HITL Commits.
  */
 public class AgentMain {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Use AI Agent - Milestone 2.1 Terminal & Filesystem Tools");
+        log.info("Starting Computer Use AI Agent - Milestone 3.3 Git Tools Active");
 
         try {
             // 1. Shared Scanner for both chat input and HITL tool security confirmation
@@ -31,14 +32,15 @@ public class AgentMain {
             // 3. Initialize the sliding-window ChatMemory
             ChatMemory memory = MessageWindowChatMemory.withMaxMessages(20);
 
-            // 4. Instantiate Terminal & Filesystem Tools with the shared console scanner
+            // 4. Instantiate Terminal, Filesystem, and Git Tools with the shared console scanner
             TerminalTools tools = new TerminalTools(scanner);
+            GitTools gitTools = new GitTools(scanner);
 
             // 5. Build the ComputerAgent proxy with bound tools
             ComputerAgent agent = AiServices.builder(ComputerAgent.class)
                     .chatLanguageModel(model)
                     .chatMemory(memory)
-                    .tools(tools)
+                    .tools(tools, gitTools)
                     .build();
 
             System.out.println("=======================================================");
