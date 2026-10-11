@@ -62,4 +62,28 @@ class TerminalToolsTest {
         String result = tools.executeCommand("echo Antigravity");
         assertThat(result).isEqualTo("User denied execution.");
     }
+
+    @Test
+    @DisplayName("Should write file when user approves with 'Y'")
+    void shouldWriteFileWhenApproved(@TempDir Path tempDir) throws IOException {
+        Path target = tempDir.resolve("output.py");
+        Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.writeFile(target.toString(), "print('Hello World')");
+        assertThat(result).contains("File written successfully");
+        assertThat(Files.readString(target)).isEqualTo("print('Hello World')");
+    }
+
+    @Test
+    @DisplayName("Should deny writing file when user enters 'N'")
+    void shouldDenyWriteFileWhenRejected(@TempDir Path tempDir) {
+        Path target = tempDir.resolve("denied.py");
+        Scanner scanner = new Scanner(new ByteArrayInputStream("N\n".getBytes()));
+        TerminalTools tools = new TerminalTools(scanner);
+
+        String result = tools.writeFile(target.toString(), "print('Should not exist')");
+        assertThat(result).isEqualTo("User denied file write.");
+        assertThat(Files.exists(target)).isFalse();
+    }
 }

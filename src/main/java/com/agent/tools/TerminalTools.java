@@ -1,5 +1,6 @@
 package com.agent.tools;
 
+import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.Objects;
 import java.util.Scanner;
 import java.util.concurrent.TimeUnit;
@@ -40,7 +42,7 @@ public class TerminalTools {
      * @return combined process output, or denial message
      */
     @Tool("Execute a raw terminal command on the host OS. Returns the standard output or error.")
-    public String executeCommand(String command) {
+    public String executeCommand(@P("command to execute") String command) {
         if (command == null || command.isBlank()) {
             return "Error: Command cannot be empty.";
         }
@@ -110,7 +112,7 @@ public class TerminalTools {
      * @return formatted listing of directory contents
      */
     @Tool("List all files and folders in a given directory path.")
-    public String listDirectory(String path) {
+    public String listDirectory(@P("directory path to list") String path) {
         if (path == null || path.isBlank()) {
             path = ".";
         }
@@ -148,7 +150,7 @@ public class TerminalTools {
      * @return contents of the file, truncated if exceeding character limit
      */
     @Tool("Read the string contents of a text file.")
-    public String readFile(String path) {
+    public String readFile(@P("path to file") String path) {
         if (path == null || path.isBlank()) {
             return "Error: File path cannot be empty.";
         }
@@ -171,6 +173,51 @@ public class TerminalTools {
         } catch (IOException e) {
             log.error("Failed to read file: " + path, e);
             return "Error: Could not read file: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Writes or overwrites a file with the provided string content after obtaining human confirmation.
+     *
+     * @param path    target file path
+     * @param content text content to write
+     * @return confirmation of successful write, or denial message
+     */
+    @Tool("Write or overwrite a file with the provided string content.")
+    public String writeFile(@P("target file path") String path, @P("file content to write") String content) {
+        if (path == null || path.isBlank()) {
+            return "Error: File path cannot be empty.";
+        }
+
+        log.warn("HITL Intercept: Agent requested file write at: '{}'", path);
+
+        System.out.println("\n[SECURITY] Agent requested to write file at: " + path);
+        System.out.print("Allow write? (Y/N): ");
+        System.out.flush();
+
+        String confirmation = "";
+        if (consoleScanner.hasNextLine()) {
+            confirmation = consoleScanner.nextLine().trim();
+        }
+
+        if (!"Y".equalsIgnoreCase(confirmation)) {
+            log.info("HITL Intercept: User rejected file write ('{}')", confirmation);
+            return "User denied file write.";
+        }
+
+        log.info("HITL Intercept: User approved file write. Writing to disk...");
+
+        try {
+            Path targetPath = Paths.get(path);
+            if (targetPath.getParent() != null) {
+                Files.createDirectories(targetPath.getParent());
+            }
+            Files.writeString(targetPath, content != null ? content : "",
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            return "File written successfully to " + path;
+        } catch (IOException e) {
+            log.error("Failed to write file: " + path, e);
+            return "Error: Could not write file: " + e.getMessage();
         }
     }
 }

@@ -8,6 +8,6 @@ import dev.langchain4j.service.SystemMessage;
  */
 public interface ComputerAgent {
 
-    @SystemMessage("You are an autonomous computer use agent. Keep your responses concise, analytical, and deterministic. Do not use conversational filler. You can use tools to execute terminal commands, read files, and browse directories. If a user asks you to perform an OS action, use the appropriate tool automatically.")
+    @SystemMessage("You are an autonomous computer use agent operating in a terminal environment. You can use tools to interact with the OS. Think step-by-step. If a user's request requires multiple steps (e.g., creating a file and then running it, or searching for a file and then reading it), do not ask the user for permission between steps. Autonomously execute the first tool, observe the result, and immediately execute the next tool until the overall goal is achieved. Keep your final textual responses concise.")
     String chat(String userMessage);
 }
