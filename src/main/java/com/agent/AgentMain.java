@@ -1,32 +1,40 @@
 package com.agent;
 
 import com.agent.factory.OllamaModelFactory;
-import com.agent.session.ChatSession;
+import dev.langchain4j.memory.ChatMemory;
+import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.service.AiServices;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Scanner;
 
 /**
- * Milestone 1.2: Interactive CLI Chat Loop with Stateful Chat Memory.
+ * Milestone 1.3: Autonomous Computer Use Agent with AiServices Abstraction.
  */
 public class AgentMain {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Use AI Agent - Milestone 1.2 Interactive CLI Loop");
+        log.info("Starting Computer Use AI Agent - Milestone 1.3 AiServices Abstraction");
 
         try {
-            // Instantiate model via factory
+            // 1. Initialize the ChatLanguageModel
             ChatLanguageModel model = OllamaModelFactory.createModel();
 
-            // Instantiate stateful chat session with memory
-            ChatSession chatSession = new ChatSession(model);
+            // 2. Initialize the sliding-window ChatMemory
+            ChatMemory memory = MessageWindowChatMemory.withMaxMessages(20);
+
+            // 3. Build the ComputerAgent proxy using AiServices
+            ComputerAgent agent = AiServices.builder(ComputerAgent.class)
+                    .chatLanguageModel(model)
+                    .chatMemory(memory)
+                    .build();
 
             System.out.println("=======================================================");
-            System.out.println("Computer Use AI Agent - Local Terminal Session Active");
+            System.out.println("Autonomous Computer Use Agent (AiServices) Active");
             System.out.println("Type your prompt below. Type 'exit' or 'quit' to terminate.");
             System.out.println("=======================================================\n");
 
@@ -51,7 +59,7 @@ public class AgentMain {
                 }
 
                 try {
-                    String response = chatSession.chat(input);
+                    String response = agent.chat(input);
                     System.out.println("Agent > " + (response != null ? response.trim() : ""));
                     System.out.println();
                 } catch (Exception e) {
