@@ -1,6 +1,7 @@
 package com.agent;
 
 import com.agent.factory.OllamaModelFactory;
+import com.agent.tools.TerminalTools;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -11,34 +12,40 @@ import org.slf4j.LoggerFactory;
 import java.util.Scanner;
 
 /**
- * Milestone 1.3: Autonomous Computer Use Agent with AiServices Abstraction.
+ * Milestone 2.1: Terminal & Filesystem Tools with Human-In-The-Loop Safety Interceptor.
  */
 public class AgentMain {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Use AI Agent - Milestone 1.3 AiServices Abstraction");
+        log.info("Starting Computer Use AI Agent - Milestone 2.1 Terminal & Filesystem Tools");
 
         try {
-            // 1. Initialize the ChatLanguageModel
+            // 1. Shared Scanner for both chat input and HITL tool security confirmation
+            Scanner scanner = new Scanner(System.in);
+
+            // 2. Initialize the ChatLanguageModel
             ChatLanguageModel model = OllamaModelFactory.createModel();
 
-            // 2. Initialize the sliding-window ChatMemory
+            // 3. Initialize the sliding-window ChatMemory
             ChatMemory memory = MessageWindowChatMemory.withMaxMessages(20);
 
-            // 3. Build the ComputerAgent proxy using AiServices
+            // 4. Instantiate Terminal & Filesystem Tools with the shared console scanner
+            TerminalTools tools = new TerminalTools(scanner);
+
+            // 5. Build the ComputerAgent proxy with bound tools
             ComputerAgent agent = AiServices.builder(ComputerAgent.class)
                     .chatLanguageModel(model)
                     .chatMemory(memory)
+                    .tools(tools)
                     .build();
 
             System.out.println("=======================================================");
-            System.out.println("Autonomous Computer Use Agent (AiServices) Active");
+            System.out.println("Autonomous Computer Use Agent (Terminal Tools Active)");
             System.out.println("Type your prompt below. Type 'exit' or 'quit' to terminate.");
             System.out.println("=======================================================\n");
 
-            Scanner scanner = new Scanner(System.in);
             while (true) {
                 System.out.print("User > ");
                 System.out.flush();
