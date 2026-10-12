@@ -1,6 +1,7 @@
 package com.agent.registry;
 
 import com.agent.config.AgentConfig;
+import com.agent.tools.ContextTools;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
 import com.agent.tools.TerminalTools;
@@ -28,6 +29,7 @@ class ToolRegistryTest {
     private GitTools gitTools;
     private WebTools webTools;
     private MemoryTools memoryTools;
+    private ContextTools contextTools;
 
     @BeforeEach
     void setUp() {
@@ -36,27 +38,30 @@ class ToolRegistryTest {
         gitTools = new GitTools(scanner);
         webTools = new WebTools(scanner);
         memoryTools = new MemoryTools(new AllMiniLmL6V2EmbeddingModel(), new InMemoryEmbeddingStore<TextSegment>());
+        contextTools = new ContextTools();
 
-        registry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools);
+        registry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools);
     }
 
     @Test
     @DisplayName("Should successfully resolve tools for web_researcher")
     void shouldResolveWebResearcherTools() {
-        Object[] tools = registry.getTools(List.of("web", "memory"));
+        Object[] tools = registry.getTools(List.of("web", "memory", "context"));
 
-        assertThat(tools).hasSize(2);
+        assertThat(tools).hasSize(3);
         assertThat(tools[0]).isSameAs(webTools);
         assertThat(tools[1]).isSameAs(memoryTools);
+        assertThat(tools[2]).isSameAs(contextTools);
     }
 
     @Test
     @DisplayName("Should successfully resolve tools for code_patcher")
     void shouldResolveCodePatcherTools() {
-        Object[] tools = registry.getTools(List.of("terminal"));
+        Object[] tools = registry.getTools(List.of("terminal", "context"));
 
-        assertThat(tools).hasSize(1);
+        assertThat(tools).hasSize(2);
         assertThat(tools[0]).isSameAs(terminalTools);
+        assertThat(tools[1]).isSameAs(contextTools);
     }
 
     @Test
@@ -87,15 +92,15 @@ class ToolRegistryTest {
         // Verify web_researcher
         AgentConfig researcher = configs.stream().filter(c -> "web_researcher".equals(c.id())).findFirst().orElseThrow();
         assertThat(researcher.name()).isEqualTo("Web Researcher");
-        assertThat(researcher.tools()).containsExactly("web", "memory");
+        assertThat(researcher.tools()).containsExactly("web", "memory", "context");
         Object[] researcherTools = registry.getTools(researcher.tools());
-        assertThat(researcherTools).hasSize(2);
+        assertThat(researcherTools).hasSize(3);
 
         // Verify code_patcher
         AgentConfig patcher = configs.stream().filter(c -> "code_patcher".equals(c.id())).findFirst().orElseThrow();
         assertThat(patcher.name()).isEqualTo("Code Patcher");
-        assertThat(patcher.tools()).containsExactly("terminal");
+        assertThat(patcher.tools()).containsExactly("terminal", "context");
         Object[] patcherTools = registry.getTools(patcher.tools());
-        assertThat(patcherTools).hasSize(1);
+        assertThat(patcherTools).hasSize(2);
     }
 }

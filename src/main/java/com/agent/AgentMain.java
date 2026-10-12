@@ -4,6 +4,7 @@ import com.agent.config.AgentConfig;
 import com.agent.factory.OllamaModelFactory;
 import com.agent.factory.SubAgentFactory;
 import com.agent.registry.ToolRegistry;
+import com.agent.tools.ContextTools;
 import com.agent.tools.DelegationTool;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
@@ -66,9 +67,10 @@ public class AgentMain {
             GitTools gitTools = new GitTools(scanner);
             WebTools webTools = new WebTools(scanner);
             MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);
+            ContextTools contextTools = new ContextTools();
 
             // 4. Instantiate ToolRegistry and register tools
-            ToolRegistry toolRegistry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools);
+            ToolRegistry toolRegistry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools);
 
             // 5. Initialize Chat Model and SubAgentFactory
             ChatLanguageModel model = OllamaModelFactory.createModel();
@@ -99,6 +101,7 @@ public class AgentMain {
                     "You are the Swarm Orchestrator. You do not have direct access to the OS or web.\n" +
                     "To fulfill the user's request, delegate tasks to sub-agents.\n" +
                     "CRITICAL: If you have multiple tasks that do not depend on each other, you MUST use the delegateParallel tool to execute them simultaneously.\n" +
+                    "BLACKBOARD: Your sub-agents share a Blackboard via the 'context' tool. If Agent A needs to pass a large piece of data or sensitive credential to Agent B, instruct Agent A to write it to the blackboard with a specific key, and instruct Agent B to read from that key.\n" +
                     "Available agents:\n"
             );
             for (AgentConfig config : configs) {

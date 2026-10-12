@@ -1,5 +1,6 @@
 package com.agent.registry;
 
+import com.agent.tools.ContextTools;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
 import com.agent.tools.TerminalTools;
@@ -28,6 +29,19 @@ public class ToolRegistry {
      * @param memoryTools   long-term vector memory operations
      */
     public ToolRegistry(TerminalTools terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools) {
+        this(terminalTools, gitTools, webTools, memoryTools, null);
+    }
+
+    /**
+     * Initializes the tool registry with standard agent tools and shared context blackboard.
+     *
+     * @param terminalTools terminal and filesystem operations
+     * @param gitTools      git version control operations
+     * @param webTools      web scraping and HTTP interaction
+     * @param memoryTools   long-term vector memory operations
+     * @param contextTools  shared blackboard memory operations
+     */
+    public ToolRegistry(TerminalTools terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools, ContextTools contextTools) {
         if (terminalTools != null) {
             registerTool("terminal", terminalTools);
         }
@@ -39,6 +53,9 @@ public class ToolRegistry {
         }
         if (memoryTools != null) {
             registerTool("memory", memoryTools);
+        }
+        if (contextTools != null) {
+            registerTool("context", contextTools);
         }
         log.info("Initialized ToolRegistry with available tools: {}", toolMap.keySet());
     }
