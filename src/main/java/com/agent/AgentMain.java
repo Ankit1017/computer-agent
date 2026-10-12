@@ -21,7 +21,7 @@ public class AgentMain {
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Use AI Agent - Milestone 4.1 Web Tools Active");
+        log.info("Starting Computer Use AI Agent - Milestone 4.2 Web & API Tools Active");
 
         try {
             // 1. Shared Scanner for both chat input and HITL tool security confirmation
@@ -33,10 +33,10 @@ public class AgentMain {
             // 3. Initialize the sliding-window ChatMemory
             ChatMemory memory = MessageWindowChatMemory.withMaxMessages(20);
 
-            // 4. Instantiate Terminal, Git, and Web Tools
+            // 4. Instantiate Terminal, Git, and Web Tools with the shared console scanner
             TerminalTools tools = new TerminalTools(scanner);
             GitTools gitTools = new GitTools(scanner);
-            WebTools webTools = new WebTools();
+            WebTools webTools = new WebTools(scanner);
 
             // 5. Build the ComputerAgent proxy with bound tools
             ComputerAgent agent = AiServices.builder(ComputerAgent.class)
