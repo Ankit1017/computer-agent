@@ -48,4 +48,34 @@ class MemoryToolsTest {
         assertThat(matches.get(0).embedded().text()).isEqualTo(fact);
         assertThat(matches.get(0).score()).isGreaterThan(0.6);
     }
+
+    @Test
+    @DisplayName("Should query long-term memory and return matching memories")
+    void shouldQueryMemorySuccessfully() {
+        EmbeddingModel model = new AllMiniLmL6V2EmbeddingModel();
+        EmbeddingStore<TextSegment> store = new InMemoryEmbeddingStore<>();
+        MemoryTools memoryTools = new MemoryTools(model, store);
+
+        memoryTools.saveToLongTermMemory("On Windows, use python3 command alias.");
+        memoryTools.saveToLongTermMemory("PostgreSQL database runs on port 5432.");
+
+        String searchResult = memoryTools.queryMemory("how to run python on Windows?");
+        assertThat(searchResult)
+                .contains("Memories retrieved:")
+                .contains("On Windows, use python3 command alias.");
+
+        String notFound = memoryTools.queryMemory("What is the speed of light in vacuum?");
+        assertThat(notFound).isEqualTo("No relevant memories found.");
+    }
+
+    @Test
+    @DisplayName("Should validate empty query in queryMemory")
+    void shouldValidateEmptyQuery() {
+        EmbeddingModel model = new AllMiniLmL6V2EmbeddingModel();
+        EmbeddingStore<TextSegment> store = new InMemoryEmbeddingStore<>();
+        MemoryTools memoryTools = new MemoryTools(model, store);
+
+        assertThat(memoryTools.queryMemory("")).isEqualTo("Error: Query cannot be empty.");
+        assertThat(memoryTools.queryMemory(null)).isEqualTo("Error: Query cannot be empty.");
+    }
 }

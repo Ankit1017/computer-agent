@@ -5,3 +5,4 @@ target/
 .planning/
 chroma_data/
 *.log
+env/

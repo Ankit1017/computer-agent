@@ -30,7 +30,7 @@ public class AgentMain {
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Use AI Agent - Milestone 6.1 Local Vector Store (RAG) Active");
+        log.info("Starting Computer Use AI Agent - Milestone 6.2 Autonomous Memory Management Active");
 
         try {
             // 1. Shared Scanner for both chat input and HITL tool security confirmation

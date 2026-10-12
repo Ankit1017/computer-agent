@@ -6,6 +6,9 @@ import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import org.slf4j.Logger;
@@ -80,6 +83,49 @@ public class MemoryTools {
         } catch (Exception e) {
             log.error("Failed to store information in vector memory", e);
             return "Error saving to long-term memory: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Actively searches long-term memory for past facts, preferences, or decisions.
+     *
+     * @param query text query to search
+     * @return retrieved memories formatted as a string, or message if none found
+     */
+    @Tool("Search long-term memory for past facts, user preferences, or architectural decisions. Use this mid-task if you need historical context that wasn't provided in the initial prompt.")
+    public String queryMemory(
+            @P("query to search in long-term memory") String query) {
+
+        if (query == null || query.isBlank()) {
+            return "Error: Query cannot be empty.";
+        }
+
+        String trimmedQuery = query.trim();
+        log.info("Tool Call: queryMemory(query='{}')", trimmedQuery);
+        System.out.println("\n[MEMORY] Querying long-term vector memory for: " + trimmedQuery);
+        System.out.flush();
+
+        try {
+            Embedding queryEmbedding = embeddingModel.embed(trimmedQuery).content();
+            EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+                    .queryEmbedding(queryEmbedding)
+                    .maxResults(3)
+                    .minScore(0.6)
+                    .build();
+            EmbeddingSearchResult<TextSegment> result = embeddingStore.search(request);
+
+            if (result == null || result.matches() == null || result.matches().isEmpty()) {
+                return "No relevant memories found.";
+            }
+
+            StringBuilder sb = new StringBuilder("Memories retrieved:\n");
+            for (EmbeddingMatch<TextSegment> match : result.matches()) {
+                sb.append("- ").append(match.embedded().text()).append("\n");
+            }
+            return sb.toString().trim();
+        } catch (Exception e) {
+            log.error("Failed to query long-term memory for '{}'", trimmedQuery, e);
+            return "Error querying long-term memory: " + e.getMessage();
         }
     }
 

@@ -21,7 +21,7 @@ public interface ComputerAgent {
                - Apply the fix using `replaceLinesInFile`.
                - Execute the script again. 
                - Only return a final text response to the user once the loop succeeds or if you exhaust all logical fixes.
-            5. LONG-TERM MEMORY: When the user asks you to remember, save, or store a fact, preference, or architectural decision to long-term memory, call the `saveToLongTermMemory` tool. Relevant context from long-term memory is automatically retrieved for your answers.
+            5. PROACTIVE MEMORY: You are responsible for your own knowledge base. Do not wait for the user to say 'remember this'. If the user shares or you deduce a system quirk (e.g., command aliases like using python3 instead of python), environment detail, or preference, you must ALWAYS FIRST call `saveToLongTermMemory` to record it before creating files or running commands. If you are assigned a task and lack context, autonomously call `queryMemory` before proceeding.
             """)
     String chat(String userMessage);
 }
