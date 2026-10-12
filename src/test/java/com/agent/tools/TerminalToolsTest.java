@@ -130,8 +130,45 @@ class TerminalToolsTest {
         TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.writeFile(target.toString(), "print('Hello World')");
-        assertThat(result).contains("File written successfully");
+        assertThat(result).contains("Successfully wrote");
         assertThat(Files.readString(target)).isEqualTo("print('Hello World')");
+    }
+
+    @Test
+    @DisplayName("Should automatically create a .bak backup when overwriting an existing file")
+    void shouldCreateBackupWhenOverwritingExistingFile(@TempDir Path tempDir) throws IOException {
+        Path target = tempDir.resolve("backup_target.txt");
+        Files.writeString(target, "Original Content");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.writeFile(target.toString(), "New Overwritten Content");
+        assertThat(result).contains("Successfully wrote");
+        assertThat(result).contains("(Original backed up to .bak)");
+
+        // Assert new content is in target file
+        assertThat(Files.readString(target)).isEqualTo("New Overwritten Content");
+
+        // Assert backup file was created with original content
+        Path backupPath = tempDir.resolve("backup_target.txt.bak");
+        assertThat(Files.exists(backupPath)).isTrue();
+        assertThat(Files.readString(backupPath)).isEqualTo("Original Content");
+    }
+
+    @Test
+    @DisplayName("Should reject file writes exceeding 5MB payload limit")
+    void shouldRejectPayloadExceeding5MB(@TempDir Path tempDir) {
+        Path target = tempDir.resolve("large_payload.txt");
+        // Create 6MB string
+        String largePayload = "X".repeat(6 * 1024 * 1024);
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.writeFile(target.toString(), largePayload);
+        assertThat(result).isEqualTo("Error: Payload exceeds maximum write limit of 5MB.");
+        assertThat(Files.exists(target)).isFalse();
     }
 
     @Test

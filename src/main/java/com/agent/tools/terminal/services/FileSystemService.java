@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
@@ -281,29 +282,53 @@ public class FileSystemService {
     }
 
     /**
-     * Writes or overwrites a file with content.
+     * Writes or overwrites a file with content, creating an automatic .bak backup if the file already exists,
+     * and enforcing a strict 5MB payload limit.
      *
-     * @param path    target file path
-     * @param content text content to write
+     * @param filePath target file path
+     * @param content  text content to write
      * @return confirmation message
      */
-    public String writeFile(String path, String content) {
-        if (path == null || path.isBlank()) {
+    public String writeFile(String filePath, String content) {
+        if (filePath == null || filePath.isBlank()) {
             return "Error: File path cannot be empty.";
+        }
+        if (content == null) {
+            content = "";
+        }
+
+        Path path = Paths.get(filePath);
+
+        // 1. Payload Size Guardrail (5MB limit)
+        byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+        if (contentBytes.length > 5 * 1024 * 1024) {
+            return "Error: Payload exceeds maximum write limit of 5MB.";
         }
 
         try {
-            Path targetPath = Paths.get(path);
-            if (targetPath.getParent() != null) {
-                Files.createDirectories(targetPath.getParent());
+            // 2. Automatic Backup Generation
+            if (Files.exists(path)) {
+                Path backupPath = Paths.get(filePath + ".bak");
+                Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
+                System.out.println("[FILESYSTEM] Created backup: " + backupPath.toString());
+            } else {
+                // Ensure parent directories exist for new files
+                if (path.getParent() != null) {
+                    Files.createDirectories(path.getParent());
+                }
             }
-            Files.writeString(targetPath, content != null ? content : "",
-                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            return "File written successfully to " + path;
+
+            // 3. Atomic/UTF-8 Write
+            Files.write(path, contentBytes, 
+                StandardOpenOption.CREATE, 
+                StandardOpenOption.TRUNCATE_EXISTING);
+                
         } catch (IOException e) {
-            log.error("Failed to write file: " + path, e);
-            return "Error: Could not write file: " + e.getMessage();
+            return "Error writing file: " + e.getMessage();
         }
+
+        return "Successfully wrote " + contentBytes.length + " bytes to " + filePath + 
+               (Files.exists(Paths.get(filePath + ".bak")) ? " (Original backed up to .bak)" : "");
     }
 
     /**

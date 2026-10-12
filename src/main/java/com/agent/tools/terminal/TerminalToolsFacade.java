@@ -52,15 +52,14 @@ public class TerminalToolsFacade {
         return fileService.readFile(path);
     }
 
-    @Tool("Write or overwrite a file with the provided string content.")
-    public String writeFile(@P("target file path") String path, @P("file content to write") String content) {
-        if (path == null || path.isBlank()) {
-            return "Error: File path cannot be empty.";
-        }
-        if (!security.requestPermission("write file at", path)) {
+    @Tool("Create a new file or completely overwrite an existing one. If overwriting, an automatic .bak backup is created. Max payload: 5MB.")
+    public String writeFile(
+            @P("The path to the file") String filePath,
+            @P("The complete text content to write") String content) {
+        if (!security.requestPermission("write file at", filePath)) {
             return "User denied file write.";
         }
-        return fileService.writeFile(path, content);
+        return fileService.writeFile(filePath, content);
     }
 
     @Tool("Recursively search directory files for a regex or keyword. Provides exact line numbers of matches.")
