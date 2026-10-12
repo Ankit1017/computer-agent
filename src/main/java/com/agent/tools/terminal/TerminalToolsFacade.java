@@ -38,13 +38,25 @@ public class TerminalToolsFacade {
         return commandService.execute(command);
     }
 
-    @Tool("Recursively list directory contents as a formatted tree. Use excludeRegex to filter noise, and maxDepth to control traversal depth. Leave excludeRegex blank for smart default filtering (.git, target, node_modules, .idea, build, dist, out, venv).")
+    @Tool("Recursively list directory contents as a tree using default noise filters and depth.")
     public String listDirectory(
-            @P("The absolute or relative path to the directory") String directoryPath,
-            @P("Optional Regex to exclude file/folder paths. Leave blank for smart default noise filtering.") String excludeRegex,
-            @P("Maximum depth to traverse (e.g. 1, 2, 4). Leave null or 0 to use default depth of 4.") Integer maxDepth) {
-        int depth = (maxDepth != null && maxDepth > 0) ? maxDepth : 4;
-        return fileService.listDirectory(directoryPath, excludeRegex, depth);
+            @P("The path to the directory") String directoryPath) {
+        return fileService.listDirectory(directoryPath, null, 4);
+    }
+
+    @Tool("Recursively list directory contents as a tree with a custom exclusion regex.")
+    public String listDirectory(
+            @P("The path to the directory") String directoryPath,
+            @P("Regex to exclude paths (leave blank for default)") String excludeRegex) {
+        return fileService.listDirectory(directoryPath, excludeRegex, 4);
+    }
+
+    @Tool("Recursively list directory contents as a tree with custom exclusion regex and maximum traversal depth.")
+    public String listDirectory(
+            @P("The path to the directory") String directoryPath,
+            @P("Regex to exclude paths") String excludeRegex,
+            @P("Maximum depth to traverse") int maxDepth) {
+        return fileService.listDirectory(directoryPath, excludeRegex, maxDepth);
     }
 
     @Tool("Read the string contents of a text file.")
@@ -62,11 +74,18 @@ public class TerminalToolsFacade {
         return fileService.writeFile(filePath, content);
     }
 
-    @Tool("Recursively search directory files for a regex or keyword. Provides exact line numbers of matches.")
+    @Tool("Search directory files for a keyword or regex pattern across all text files.")
+    public String searchDirectory(
+            @P("The path to the directory") String directoryPath,
+            @P("The keyword or Regex pattern to search for") String keyword) {
+        return fileService.searchDirectory(directoryPath, keyword, null);
+    }
+
+    @Tool("Search directory files for a keyword or regex pattern, filtered by a specific file extension.")
     public String searchDirectory(
             @P("The path to the directory") String directoryPath,
             @P("The keyword or Regex pattern to search for") String keyword,
-            @P("Optional file extension to filter by (e.g., '.java' or '.md'). Leave blank for all text files.") String fileExtension) {
+            @P("File extension to filter by (e.g., '.java' or '.md')") String fileExtension) {
         return fileService.searchDirectory(directoryPath, keyword, fileExtension);
     }
 

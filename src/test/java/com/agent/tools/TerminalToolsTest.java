@@ -36,7 +36,7 @@ class TerminalToolsTest {
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String listing = tools.listDirectory(tempDir.toString(), "", null);
+        String listing = tools.listDirectory(tempDir.toString());
         assertThat(listing).contains("sample1.txt");
         assertThat(listing).contains("sample2.txt");
     }
@@ -50,7 +50,7 @@ class TerminalToolsTest {
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String listing = tools.listDirectory(tempDir.toString(), "", null);
+        String listing = tools.listDirectory(tempDir.toString(), "");
         assertThat(listing).contains("|-- src");
         assertThat(listing).contains("|-- Main.java");
         assertThat(listing).startsWith("Directory Tree for");
@@ -66,7 +66,7 @@ class TerminalToolsTest {
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String listing = tools.listDirectory(tempDir.toString(), ".*target.*", null);
+        String listing = tools.listDirectory(tempDir.toString(), ".*target.*");
         assertThat(listing).contains("README.md");
         assertThat(listing).doesNotContain("app.jar");
     }
@@ -204,6 +204,23 @@ class TerminalToolsTest {
         assertThat(result).contains("Line 2: Target keyword CRITICAL_ERROR found");
         assertThat(result).doesNotContain("other.log");
         assertThat(result).doesNotContain("image.png");
+    }
+
+    @Test
+    @DisplayName("Should search directory using 2-arg overload across all files")
+    void shouldSearchDirectoryWithoutExtensionFilter(@TempDir Path tempDir) throws IOException {
+        Path logFile = tempDir.resolve("system.log");
+        Files.writeString(logFile, "Error code: ERR_404 not found");
+
+        Path mdFile = tempDir.resolve("doc.md");
+        Files.writeString(mdFile, "Reference to ERR_404 in documentation");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.searchDirectory(tempDir.toString(), "ERR_404");
+        assertThat(result).contains("system.log");
+        assertThat(result).contains("doc.md");
     }
 
     @Test
