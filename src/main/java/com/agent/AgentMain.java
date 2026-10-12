@@ -124,6 +124,9 @@ public class AgentMain {
                         .append(" - ").append(config.systemMessage()).append("\n");
             }
             managerPrompt.append("\nWhen tasks are independent, ALWAYS use delegateParallel. When tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n\n")
+                    .append("HOST OS & COMMAND EXECUTION:\n")
+                    .append("Host OS is: ").append(System.getProperty("os.name")).append(".\n")
+                    .append("When requesting terminal commands from devops, ensure syntax matches the host OS (e.g. on Windows use 'ping -n 4' instead of '-c 4', and for sleep/delay use 'powershell -Command Start-Sleep -Seconds 65' instead of 'sleep 65'). Always delegate distinct sequential steps as separate tasks (run ping first, then run sleep/timeout).\n\n")
                     .append("GOAL ADHERENCE & ANTI-LOOPING:\n")
                     .append("1. Never repeat the exact same delegation if it failed or returned no useful data. Stop and try a different tool or approach.\n")
                     .append("2. If a sub-agent returns a massive chunk of irrelevant data, ignore the irrelevant parts and stick strictly to your original goal.\n")
