@@ -36,7 +36,7 @@ class TerminalToolsTest {
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String listing = tools.listDirectory(tempDir.toString(), "");
+        String listing = tools.listDirectory(tempDir.toString(), "", null);
         assertThat(listing).contains("sample1.txt");
         assertThat(listing).contains("sample2.txt");
     }
@@ -50,7 +50,7 @@ class TerminalToolsTest {
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String listing = tools.listDirectory(tempDir.toString(), "");
+        String listing = tools.listDirectory(tempDir.toString(), "", null);
         assertThat(listing).contains("|-- src");
         assertThat(listing).contains("|-- Main.java");
         assertThat(listing).startsWith("Directory Tree for");
@@ -66,9 +66,25 @@ class TerminalToolsTest {
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String listing = tools.listDirectory(tempDir.toString(), ".*target.*");
+        String listing = tools.listDirectory(tempDir.toString(), ".*target.*", null);
         assertThat(listing).contains("README.md");
         assertThat(listing).doesNotContain("app.jar");
+    }
+
+    @Test
+    @DisplayName("Should respect maxDepth=1 and not recurse into subdirectories")
+    void shouldRespectMaxDepthOne(@TempDir Path tempDir) throws IOException {
+        Files.createDirectory(tempDir.resolve("subdir"));
+        Files.createFile(tempDir.resolve("subdir").resolve("deep.txt"));
+        Files.createFile(tempDir.resolve("root.txt"));
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String listing = tools.listDirectory(tempDir.toString(), "", 1);
+        assertThat(listing).contains("root.txt");
+        assertThat(listing).contains("subdir");
+        assertThat(listing).doesNotContain("deep.txt");
     }
 
     @Test
@@ -172,16 +188,46 @@ class TerminalToolsTest {
     }
 
     @Test
-    @DisplayName("Should reject line range exceeding 200 lines")
-    void shouldRejectLineRangeExceeding200(@TempDir Path tempDir) throws IOException {
+    @DisplayName("Should reject line range exceeding 500 lines")
+    void shouldRejectLineRangeExceeding500(@TempDir Path tempDir) throws IOException {
         Path logFile = tempDir.resolve("large.log");
         Files.writeString(logFile, "sample content");
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String result = tools.readFileLines(logFile.toString(), 1, 202);
-        assertThat(result).isEqualTo("Error: Line range too large. Request 200 lines or fewer.");
+        String result = tools.readFileLines(logFile.toString(), 1, 502);
+        assertThat(result).contains("Cannot read more than 500 lines");
+    }
+
+    @Test
+    @DisplayName("Should reject binary files containing null bytes")
+    void shouldRejectBinaryFilesWithNullBytes(@TempDir Path tempDir) throws IOException {
+        Path binaryFile = tempDir.resolve("data.bin");
+        byte[] binaryData = {0x50, 0x4B, 0x00, 0x04, 0x14, 0x00}; // PK\x00 ZIP magic
+        Files.write(binaryFile, binaryData);
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.readFileLines(binaryFile.toString(), 1, 5);
+        assertThat(result).contains("binary");
+    }
+
+    @Test
+    @DisplayName("Should include file header with path and line range in readFileLines output")
+    void shouldIncludeFileHeaderInReadFileLines(@TempDir Path tempDir) throws IOException {
+        Path logFile = tempDir.resolve("notes.txt");
+        Files.writeString(logFile, "line one\nline two\nline three\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.readFileLines(logFile.toString(), 1, 2);
+        assertThat(result).contains("File:");
+        assertThat(result).contains("Lines 1 to 2");
+        assertThat(result).contains("1: line one");
+        assertThat(result).contains("2: line two");
     }
 
     @Test

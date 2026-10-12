@@ -24,7 +24,6 @@ public class FileSystemService {
     private static final int MAX_FILE_READ_CHARACTERS = 3000;
     private static final int MAX_SEARCH_DEPTH = 3;
     private static final int MAX_SEARCH_MATCHES = 20;
-    private static final int MAX_LINE_RANGE = 200;
 
     private static final Set<String> BINARY_EXTENSIONS = Set.of(
             ".jar", ".class", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
@@ -33,15 +32,16 @@ public class FileSystemService {
     );
 
     /**
-     * Recursively lists the contents of a directory as a formatted tree, up to depth 4.
+     * Recursively lists the contents of a directory as a formatted tree up to a configurable depth.
      * Applies a Regex pattern to exclude noisy directories such as build artifacts and hidden folders.
      *
      * @param directoryPath directory path to walk
      * @param excludeRegex  regex matched against full path strings to exclude entries;
      *                      if null or blank, defaults to common build/hidden folder patterns
+     * @param maxDepth      maximum traversal depth (must be >= 1)
      * @return tree-formatted project structure or error
      */
-    public String listDirectory(String directoryPath, String excludeRegex) {
+    public String listDirectory(String directoryPath, String excludeRegex, int maxDepth) {
         if (directoryPath == null || directoryPath.isBlank()) {
             directoryPath = ".";
         }
@@ -56,7 +56,7 @@ public class FileSystemService {
                 : excludeRegex;
 
         StringBuilder sb = new StringBuilder("Directory Tree for " + directoryPath + ":\n");
-        try (Stream<Path> stream = Files.walk(start, 4)) {
+        try (Stream<Path> stream = Files.walk(start, maxDepth)) {
             List<Path> entries = stream
                     .filter(path -> !path.toString().replace("\\", "/").matches(regex))
                     .limit(150)
@@ -115,58 +115,74 @@ public class FileSystemService {
     }
 
     /**
-     * Reads a specific range of lines from a file with line numbers prepended.
+     * Reads a specific range of lines from a text file with binary detection, UTF-8 validation,
+     * and strict 500-line pagination to protect the LLM context window.
      *
-     * @param path      path to file
+     * @param filePath  path to the file
      * @param startLine 1-based start line index
-     * @param endLine   1-based end line index
-     * @return formatted lines or error message
+     * @param endLine   1-based end line index (inclusive)
+     * @return formatted numbered lines or descriptive error message
      */
-    public String readFileLines(String path, Integer startLine, Integer endLine) {
-        if (path == null || path.isBlank()) {
+    public String readFileLines(String filePath, int startLine, int endLine) {
+        if (filePath == null || filePath.isBlank()) {
             return "Error: File path cannot be empty.";
         }
-        int start = startLine != null ? startLine : 1;
-        int end = endLine != null ? endLine : start + 50;
-        if (start < 1 || end < start) {
-            return "Error: Invalid line range: startLine=" + start + ", endLine=" + end;
+
+        Path path = Paths.get(filePath);
+        if (!Files.exists(path)) {
+            return "Error: File does not exist.";
         }
-        if ((end - start) > MAX_LINE_RANGE) {
-            return "Error: Line range too large. Request 200 lines or fewer.";
+        if (Files.isDirectory(path)) {
+            return "Error: Path is a directory, not a file.";
         }
 
-        log.info("FileSystemService: readFileLines(path='{}', startLine={}, endLine={})", path, start, end);
-
-        try {
-            Path targetPath = Paths.get(path);
-            if (!Files.exists(targetPath)) {
-                return "Error: File does not exist: " + path;
-            }
-            if (Files.isDirectory(targetPath)) {
-                return "Error: Path is a directory, not a file: " + path;
-            }
-
-            try (Stream<String> lines = Files.lines(targetPath, StandardCharsets.UTF_8)) {
-                List<String> slice = lines
-                        .skip(start - 1)
-                        .limit((long) end - start + 1)
-                        .collect(Collectors.toList());
-
-                if (slice.isEmpty()) {
-                    return "[No lines found in requested range " + start + "-" + end + "]";
+        // 1. Binary Safeguard: probe first 1024 bytes for null characters (0x00)
+        try (java.io.InputStream is = Files.newInputStream(path)) {
+            byte[] buffer = new byte[1024];
+            int bytesRead = is.read(buffer);
+            if (bytesRead > 0) {
+                for (int i = 0; i < bytesRead; i++) {
+                    if (buffer[i] == 0x00) {
+                        return "Error: File appears to be binary. Cannot read contents into context.";
+                    }
                 }
-
-                StringBuilder sb = new StringBuilder();
-                int currentLine = start;
-                for (String line : slice) {
-                    sb.append(currentLine++).append(": ").append(line).append(System.lineSeparator());
-                }
-                return sb.toString().trim();
             }
-        } catch (Exception e) {
-            log.error("Failed to read file lines: " + path, e);
-            return "Error: Could not read file lines: " + e.getMessage();
+        } catch (IOException e) {
+            return "Error probing file type: " + e.getMessage();
         }
+
+        // 2. Pagination limits
+        if (startLine < 1) startLine = 1;
+        if (endLine < startLine) {
+            return "Error: endLine must be greater than or equal to startLine.";
+        }
+        if ((endLine - startLine) > 500) {
+            return "Error: Cannot read more than 500 lines at a time. Please paginate your request to protect the context window.";
+        }
+
+        // 3. UTF-8 streaming read
+        StringBuilder sb = new StringBuilder("File: " + filePath + " (Lines " + startLine + " to " + endLine + ")\n");
+        try (Stream<String> lines = Files.lines(path, StandardCharsets.UTF_8)) {
+            final int finalStart = startLine;
+            List<String> extracted = lines
+                    .skip(startLine - 1)
+                    .limit((long) endLine - startLine + 1)
+                    .toList();
+
+            if (extracted.isEmpty()) {
+                return sb.append("[No lines found in this range]").toString();
+            }
+            for (int i = 0; i < extracted.size(); i++) {
+                sb.append(finalStart + i).append(": ").append(extracted.get(i)).append("\n");
+            }
+        } catch (java.nio.charset.MalformedInputException e) {
+            return "Error: File is not valid UTF-8. It may be binary or use a non-standard encoding.";
+        } catch (IOException e) {
+            log.error("Failed to read file lines: {}", filePath, e);
+            return "Error reading file: " + e.getMessage();
+        }
+
+        return sb.toString();
     }
 
     /**

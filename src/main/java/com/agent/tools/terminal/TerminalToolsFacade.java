@@ -38,11 +38,13 @@ public class TerminalToolsFacade {
         return commandService.execute(command);
     }
 
-    @Tool("Recursively list directory contents as a formatted tree (depth 4). Use excludeRegex to filter out noisy folders. Leave excludeRegex blank to apply the default noise filter (.git, target, node_modules, .idea, build, dist, out, venv).")
+    @Tool("Recursively list directory contents as a formatted tree. Use excludeRegex to filter noise, and maxDepth to control traversal depth. Leave excludeRegex blank for smart default filtering (.git, target, node_modules, .idea, build, dist, out, venv).")
     public String listDirectory(
             @P("The absolute or relative path to the directory") String directoryPath,
-            @P("Optional Regex to exclude file/folder paths. Leave blank for smart default noise filtering.") String excludeRegex) {
-        return fileService.listDirectory(directoryPath, excludeRegex);
+            @P("Optional Regex to exclude file/folder paths. Leave blank for smart default noise filtering.") String excludeRegex,
+            @P("Maximum depth to traverse (e.g. 1, 2, 4). Leave null or 0 to use default depth of 4.") Integer maxDepth) {
+        int depth = (maxDepth != null && maxDepth > 0) ? maxDepth : 4;
+        return fileService.listDirectory(directoryPath, excludeRegex, depth);
     }
 
     @Tool("Read the string contents of a text file.")
@@ -68,12 +70,12 @@ public class TerminalToolsFacade {
         return fileService.searchDirectory(directoryPath, keyword);
     }
 
-    @Tool("Read a specific range of lines from a file. Use this to inspect large files safely.")
+    @Tool("Read specific lines from a text file with line numbers. STRICT LIMIT: Max 500 lines per read. Automatically rejects binary files. Use this for safe, paginated file inspection.")
     public String readFileLines(
-            @P("path to file") String path,
-            @P("1-based start line number") Integer startLine,
-            @P("1-based end line number") Integer endLine) {
-        return fileService.readFileLines(path, startLine, endLine);
+            @P("The path to the file") String filePath,
+            @P("The starting line number (1-indexed)") int startLine,
+            @P("The ending line number (inclusive). Max 500 lines above startLine.") int endLine) {
+        return fileService.readFileLines(filePath, startLine, endLine);
     }
 
     @Tool("Replace specific lines in an existing file with new content. Use this to patch code or text without rewriting the whole file.")
