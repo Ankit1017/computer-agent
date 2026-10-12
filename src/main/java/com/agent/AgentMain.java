@@ -8,7 +8,10 @@ import com.agent.tools.ContextTools;
 import com.agent.tools.DelegationTool;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
-import com.agent.tools.TerminalTools;
+import com.agent.tools.terminal.TerminalToolsFacade;
+import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.terminal.services.CommandExecutorService;
+import com.agent.tools.terminal.services.FileSystemService;
 import com.agent.tools.WebTools;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,7 +66,10 @@ public class AgentMain {
             }
 
             // 3. Instantiate Tools
-            TerminalTools terminalTools = new TerminalTools(scanner);
+            SecurityInterceptor security = new SecurityInterceptor(scanner);
+            CommandExecutorService cmdService = new CommandExecutorService();
+            FileSystemService fsService = new FileSystemService();
+            TerminalToolsFacade terminalTools = new TerminalToolsFacade(security, cmdService, fsService);
             GitTools gitTools = new GitTools(scanner);
             WebTools webTools = new WebTools(scanner);
             MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);

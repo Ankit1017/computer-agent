@@ -1,5 +1,9 @@
 package com.agent.tools;
 
+import com.agent.tools.terminal.TerminalToolsFacade;
+import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.terminal.services.CommandExecutorService;
+import com.agent.tools.terminal.services.FileSystemService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -15,6 +19,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class TerminalToolsTest {
 
+    private TerminalToolsFacade createTools(Scanner scanner) {
+        return new TerminalToolsFacade(
+                new SecurityInterceptor(scanner),
+                new CommandExecutorService(),
+                new FileSystemService()
+        );
+    }
+
     @Test
     @DisplayName("Should list files in an existing directory")
     void shouldListDirectory(@TempDir Path tempDir) throws IOException {
@@ -22,7 +34,7 @@ class TerminalToolsTest {
         Files.createFile(tempDir.resolve("sample2.txt"));
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String listing = tools.listDirectory(tempDir.toString());
         assertThat(listing).contains("sample1.txt");
@@ -37,7 +49,7 @@ class TerminalToolsTest {
         Files.writeString(file, largeContent);
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String readResult = tools.readFile(file.toString());
         assertThat(readResult).hasSizeLessThanOrEqualTo(3050);
@@ -48,7 +60,7 @@ class TerminalToolsTest {
     @DisplayName("Should execute terminal command when user approves with 'Y'")
     void shouldExecuteCommandWhenApproved() {
         Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.executeCommand("echo Antigravity");
         assertThat(result.trim()).contains("Antigravity");
@@ -58,7 +70,7 @@ class TerminalToolsTest {
     @DisplayName("Should deny execution and not run command when user enters 'N'")
     void shouldDenyCommandWhenRejected() {
         Scanner scanner = new Scanner(new ByteArrayInputStream("N\n".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.executeCommand("echo Antigravity");
         assertThat(result).isEqualTo("User denied execution.");
@@ -69,7 +81,7 @@ class TerminalToolsTest {
     void shouldWriteFileWhenApproved(@TempDir Path tempDir) throws IOException {
         Path target = tempDir.resolve("output.py");
         Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.writeFile(target.toString(), "print('Hello World')");
         assertThat(result).contains("File written successfully");
@@ -81,7 +93,7 @@ class TerminalToolsTest {
     void shouldDenyWriteFileWhenRejected(@TempDir Path tempDir) {
         Path target = tempDir.resolve("denied.py");
         Scanner scanner = new Scanner(new ByteArrayInputStream("N\n".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.writeFile(target.toString(), "print('Should not exist')");
         assertThat(result).isEqualTo("User denied file write.");
@@ -101,7 +113,7 @@ class TerminalToolsTest {
         Files.writeString(binaryFile, "CRITICAL_ERROR in binary");
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.searchDirectory(tempDir.toString(), "CRITICAL_ERROR");
         assertThat(result).contains("app.log");
@@ -120,7 +132,7 @@ class TerminalToolsTest {
         Files.writeString(logFile, sb.toString());
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.readFileLines(logFile.toString(), 30, 35);
         assertThat(result).contains("30: This is line 30");
@@ -136,7 +148,7 @@ class TerminalToolsTest {
         Files.writeString(logFile, "sample content");
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.readFileLines(logFile.toString(), 1, 202);
         assertThat(result).isEqualTo("Error: Line range too large. Request 200 lines or fewer.");
@@ -149,7 +161,7 @@ class TerminalToolsTest {
         Files.writeString(configFile, "server: localhost\nport: 8080\ndebug: false\n");
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.replaceLinesInFile(configFile.toString(), 2, 2, "port: 9090");
         assertThat(result).contains("Successfully patched lines 2 to 2");
@@ -165,7 +177,7 @@ class TerminalToolsTest {
         Files.writeString(configFile, "server: localhost\nport: 8080\ndebug: false\n");
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("N\n".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.replaceLinesInFile(configFile.toString(), 2, 2, "port: 9090");
         assertThat(result).isEqualTo("User denied file patch.");
@@ -181,7 +193,7 @@ class TerminalToolsTest {
         Files.writeString(configFile, "server: localhost\nport: 8080\ndebug: false\n");
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
-        TerminalTools tools = new TerminalTools(scanner);
+        TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.replaceLinesInFile(configFile.toString(), 2, 3, "port: 9090\nssl: true\ndebug: true");
         assertThat(result).contains("Successfully patched lines 2 to 3");

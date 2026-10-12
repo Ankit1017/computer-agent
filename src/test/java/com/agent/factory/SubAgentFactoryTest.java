@@ -5,7 +5,6 @@ import com.agent.config.AgentConfig;
 import com.agent.registry.ToolRegistry;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
-import com.agent.tools.TerminalTools;
 import com.agent.tools.WebTools;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
@@ -18,6 +17,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import com.agent.tools.terminal.TerminalToolsFacade;
+import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.terminal.services.CommandExecutorService;
+import com.agent.tools.terminal.services.FileSystemService;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
@@ -28,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class SubAgentFactoryTest {
 
     private ToolRegistry registry;
-    private TerminalTools terminalTools;
+    private TerminalToolsFacade terminalTools;
     private WebTools webTools;
     private MemoryTools memoryTools;
     private GitTools gitTools;
@@ -36,7 +40,11 @@ class SubAgentFactoryTest {
     @BeforeEach
     void setUp() {
         Scanner scanner = new Scanner(System.in);
-        terminalTools = new TerminalTools(scanner);
+        terminalTools = new TerminalToolsFacade(
+                new SecurityInterceptor(scanner),
+                new CommandExecutorService(),
+                new FileSystemService()
+        );
         gitTools = new GitTools(scanner);
         webTools = new WebTools(scanner);
         memoryTools = new MemoryTools(new AllMiniLmL6V2EmbeddingModel(), new InMemoryEmbeddingStore<TextSegment>());

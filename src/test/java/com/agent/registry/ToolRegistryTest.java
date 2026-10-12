@@ -4,7 +4,6 @@ import com.agent.config.AgentConfig;
 import com.agent.tools.ContextTools;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
-import com.agent.tools.TerminalTools;
 import com.agent.tools.WebTools;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -14,6 +13,11 @@ import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import com.agent.tools.terminal.TerminalToolsFacade;
+import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.terminal.services.CommandExecutorService;
+import com.agent.tools.terminal.services.FileSystemService;
 
 import java.io.InputStream;
 import java.util.List;
@@ -25,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ToolRegistryTest {
 
     private ToolRegistry registry;
-    private TerminalTools terminalTools;
+    private TerminalToolsFacade terminalTools;
     private GitTools gitTools;
     private WebTools webTools;
     private MemoryTools memoryTools;
@@ -34,7 +38,11 @@ class ToolRegistryTest {
     @BeforeEach
     void setUp() {
         Scanner scanner = new Scanner(System.in);
-        terminalTools = new TerminalTools(scanner);
+        terminalTools = new TerminalToolsFacade(
+                new SecurityInterceptor(scanner),
+                new CommandExecutorService(),
+                new FileSystemService()
+        );
         gitTools = new GitTools(scanner);
         webTools = new WebTools(scanner);
         memoryTools = new MemoryTools(new AllMiniLmL6V2EmbeddingModel(), new InMemoryEmbeddingStore<TextSegment>());

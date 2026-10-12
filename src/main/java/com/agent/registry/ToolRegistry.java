@@ -3,8 +3,8 @@ package com.agent.registry;
 import com.agent.tools.ContextTools;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
-import com.agent.tools.TerminalTools;
 import com.agent.tools.WebTools;
+import com.agent.tools.terminal.TerminalToolsFacade;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,25 +23,25 @@ public class ToolRegistry {
     /**
      * Initializes the tool registry with standard agent tools.
      *
-     * @param terminalTools terminal and filesystem operations
+     * @param terminalTools terminal and filesystem operations facade
      * @param gitTools      git version control operations
      * @param webTools      web scraping and HTTP interaction
      * @param memoryTools   long-term vector memory operations
      */
-    public ToolRegistry(TerminalTools terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools) {
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools) {
         this(terminalTools, gitTools, webTools, memoryTools, null);
     }
 
     /**
      * Initializes the tool registry with standard agent tools and shared context blackboard.
      *
-     * @param terminalTools terminal and filesystem operations
+     * @param terminalTools terminal and filesystem operations facade
      * @param gitTools      git version control operations
      * @param webTools      web scraping and HTTP interaction
      * @param memoryTools   long-term vector memory operations
      * @param contextTools  shared blackboard memory operations
      */
-    public ToolRegistry(TerminalTools terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools, ContextTools contextTools) {
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools, ContextTools contextTools) {
         if (terminalTools != null) {
             registerTool("terminal", terminalTools);
         }
