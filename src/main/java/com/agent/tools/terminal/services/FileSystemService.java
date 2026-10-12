@@ -33,41 +33,50 @@ public class FileSystemService {
     );
 
     /**
-     * Recursively lists the contents of a directory up to depth 4, ignoring build and hidden folders.
+     * Recursively lists the contents of a directory as a formatted tree, up to depth 4.
+     * Applies a Regex pattern to exclude noisy directories such as build artifacts and hidden folders.
      *
-     * @param directoryPath directory path to list
-     * @return formatted project structure or error
+     * @param directoryPath directory path to walk
+     * @param excludeRegex  regex matched against full path strings to exclude entries;
+     *                      if null or blank, defaults to common build/hidden folder patterns
+     * @return tree-formatted project structure or error
      */
-    public String listDirectory(String directoryPath) {
+    public String listDirectory(String directoryPath, String excludeRegex) {
         if (directoryPath == null || directoryPath.isBlank()) {
             directoryPath = ".";
         }
-        Path start = Paths.get(directoryPath);
+        Path start = Paths.get(directoryPath).toAbsolutePath().normalize();
         if (!Files.exists(start)) {
             return "Error: Directory does not exist.";
         }
 
-        StringBuilder sb = new StringBuilder("Project Structure for " + directoryPath + ":\n");
+        // Default aggressive filter for common noise directories
+        String regex = (excludeRegex == null || excludeRegex.isBlank())
+                ? "(?i).*(\\.git|target|node_modules|\\.idea|build|dist|out|venv|__pycache__).*"
+                : excludeRegex;
+
+        StringBuilder sb = new StringBuilder("Directory Tree for " + directoryPath + ":\n");
         try (Stream<Path> stream = Files.walk(start, 4)) {
-            List<String> files = stream
-                    .map(Path::toString)
-                    .filter(path -> !path.contains(".git")
-                            && !path.contains("target")
-                            && !path.contains(".idea")
-                            && !path.contains("node_modules")
-                            && !path.contains("build"))
-                    .limit(100)
+            List<Path> entries = stream
+                    .filter(path -> !path.toString().replace("\\", "/").matches(regex))
+                    .limit(150)
                     .toList();
 
-            for (String file : files) {
-                sb.append(file).append("\n");
+            for (Path path : entries) {
+                int depth = start.relativize(path).getNameCount();
+                String prefix = (depth == 0) ? "" : "  ".repeat(depth - 1) + "|-- ";
+                sb.append(prefix).append(path.getFileName() != null ? path.getFileName().toString() : path.toString());
+                if (Files.isDirectory(path)) {
+                    sb.append("/");
+                }
+                sb.append("\n");
             }
 
-            if (files.size() == 100) {
-                sb.append("... [DIRECTORY TRUNCATED TO PRESERVE CONTEXT. BE MORE SPECIFIC] ...\n");
+            if (entries.size() == 150) {
+                sb.append("... [DIRECTORY TRUNCATED AT 150 ITEMS TO PRESERVE CONTEXT] ...\n");
             }
         } catch (IOException e) {
-            log.error("Failed to list directory: " + directoryPath, e);
+            log.error("Failed to list directory: {}", directoryPath, e);
             return "Error reading directory: " + e.getMessage();
         }
         return sb.toString();

@@ -38,9 +38,11 @@ public class TerminalToolsFacade {
         return commandService.execute(command);
     }
 
-    @Tool("Recursively list the contents of a directory to understand project structure. Automatically ignores noisy folders like .git, target, and node_modules.")
-    public String listDirectory(@P("The absolute or relative path to the directory") String directoryPath) {
-        return fileService.listDirectory(directoryPath);
+    @Tool("Recursively list directory contents as a formatted tree (depth 4). Use excludeRegex to filter out noisy folders. Leave excludeRegex blank to apply the default noise filter (.git, target, node_modules, .idea, build, dist, out, venv).")
+    public String listDirectory(
+            @P("The absolute or relative path to the directory") String directoryPath,
+            @P("Optional Regex to exclude file/folder paths. Leave blank for smart default noise filtering.") String excludeRegex) {
+        return fileService.listDirectory(directoryPath, excludeRegex);
     }
 
     @Tool("Read the string contents of a text file.")

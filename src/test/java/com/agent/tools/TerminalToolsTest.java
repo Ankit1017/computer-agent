@@ -28,7 +28,7 @@ class TerminalToolsTest {
     }
 
     @Test
-    @DisplayName("Should list files in an existing directory")
+    @DisplayName("Should list files in an existing directory using default noise filter")
     void shouldListDirectory(@TempDir Path tempDir) throws IOException {
         Files.createFile(tempDir.resolve("sample1.txt"));
         Files.createFile(tempDir.resolve("sample2.txt"));
@@ -36,9 +36,39 @@ class TerminalToolsTest {
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String listing = tools.listDirectory(tempDir.toString());
+        String listing = tools.listDirectory(tempDir.toString(), "");
         assertThat(listing).contains("sample1.txt");
         assertThat(listing).contains("sample2.txt");
+    }
+
+    @Test
+    @DisplayName("Should format directory listing as a tree with |-- prefixes")
+    void shouldFormatDirectoryAsTree(@TempDir Path tempDir) throws IOException {
+        Files.createDirectory(tempDir.resolve("src"));
+        Files.createFile(tempDir.resolve("src").resolve("Main.java"));
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String listing = tools.listDirectory(tempDir.toString(), "");
+        assertThat(listing).contains("|-- src");
+        assertThat(listing).contains("|-- Main.java");
+        assertThat(listing).startsWith("Directory Tree for");
+    }
+
+    @Test
+    @DisplayName("Should exclude folders matching a custom regex pattern")
+    void shouldExcludeFoldersMatchingCustomRegex(@TempDir Path tempDir) throws IOException {
+        Files.createDirectory(tempDir.resolve("target"));
+        Files.createFile(tempDir.resolve("target").resolve("app.jar"));
+        Files.createFile(tempDir.resolve("README.md"));
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String listing = tools.listDirectory(tempDir.toString(), ".*target.*");
+        assertThat(listing).contains("README.md");
+        assertThat(listing).doesNotContain("app.jar");
     }
 
     @Test
