@@ -119,7 +119,7 @@ class TerminalToolsTest {
         TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.executeCommand("echo Antigravity");
-        assertThat(result).isEqualTo("User denied execution.");
+        assertThat(result).isEqualTo("User denied command execution.");
     }
 
     @Test

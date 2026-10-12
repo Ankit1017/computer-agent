@@ -33,7 +33,7 @@ public class TerminalToolsFacade {
             return "Error: Command cannot be empty.";
         }
         if (!security.requestPermission("execute command", command)) {
-            return "User denied execution.";
+            return "User denied command execution.";
         }
         return commandService.execute(command);
     }

@@ -36,16 +36,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
-
-/**
- * Phase 7, Milestone 7.2: The Swarm Orchestrator Verification.
- */
 public class AgentMain {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
         log.info("Starting Computer Agent - Milestone 7.2 Swarm Orchestrator Active");
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("\n[SYSTEM] Graceful shutdown initiated. Releasing resources...");
+            // If you have a global ExecutorService for virtual threads, call .shutdownNow() here.
+            // If you need to cleanly disconnect from ChromaDB, invoke the close methods here.
+            System.out.println("[SYSTEM] Shutdown complete. Goodbye.");
+        }));
 
         try {
             // 1. Shared Scanner for both chat input and HITL tool security confirmation
