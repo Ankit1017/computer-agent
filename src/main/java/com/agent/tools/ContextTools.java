@@ -36,7 +36,7 @@ public class ContextTools {
         }
 
         String trimmedKey = key.trim();
-        String payload = value != null ? value : "";
+        String payload = (value != null && !value.isBlank()) ? value : "[Empty payload]";
         blackboard.put(trimmedKey, payload);
 
         log.info("Blackboard write: key='{}', payload length={}", trimmedKey, payload.length());
@@ -64,6 +64,10 @@ public class ContextTools {
         if (value == null) {
             log.warn("Blackboard read miss for key='{}'", trimmedKey);
             return "Error: Key '" + trimmedKey + "' not found on the blackboard.";
+        }
+
+        if (value.isBlank()) {
+            return "[Key '" + trimmedKey + "' exists on the blackboard but contains no text data]";
         }
 
         log.info("Blackboard read hit: key='{}', payload length={}", trimmedKey, value.length());

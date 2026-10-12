@@ -117,7 +117,11 @@ public class AgentMain {
                 managerPrompt.append("- ").append(config.id()).append(": ").append(config.name())
                         .append(" - ").append(config.systemMessage()).append("\n");
             }
-            managerPrompt.append("\nWhen tasks are independent, ALWAYS use delegateParallel. When tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.");
+            managerPrompt.append("\nWhen tasks are independent, ALWAYS use delegateParallel. When tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n\n")
+                    .append("GOAL ADHERENCE & ANTI-LOOPING:\n")
+                    .append("1. Never repeat the exact same delegation if it failed or returned no useful data. Stop and try a different tool or approach.\n")
+                    .append("2. If a sub-agent returns a massive chunk of irrelevant data, ignore the irrelevant parts and stick strictly to your original goal.\n")
+                    .append("3. To understand project structure, ALWAYS delegate 'listDirectory' to the Architect, not 'searchDirectory'.\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)

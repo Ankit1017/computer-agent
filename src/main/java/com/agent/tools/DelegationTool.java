@@ -61,7 +61,10 @@ public class DelegationTool {
         try {
             String result = agent.execute(task);
             log.info("Agent '{}' completed task. Response length: {}", targetId, result != null ? result.length() : 0);
-            return result != null ? result : "[No response from agent]";
+            if (result == null || result.isBlank()) {
+                return "[Agent '" + targetId + "' completed task with no text output]";
+            }
+            return result;
         } catch (Exception e) {
             log.error("Error during delegation to agent '" + targetId + "'", e);
             return "Error executing task with agent '" + targetId + "': " + e.getMessage();
@@ -119,7 +122,8 @@ public class DelegationTool {
             return "Error executing parallel tasks: " + e.getMessage();
         }
 
-        return combinedResult.toString().trim();
+        String combined = combinedResult.toString().trim();
+        return combined.isBlank() ? "[All parallel tasks completed with no text output]" : combined;
     }
 
     public Map<String, WorkerAgent> getSwarm() {

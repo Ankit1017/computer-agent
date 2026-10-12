@@ -123,36 +123,40 @@ public class TerminalTools {
      * @param path target directory path (relative or absolute)
      * @return formatted listing of directory contents
      */
-    @Tool("List all files and folders in a given directory path.")
-    public String listDirectory(@P("directory path to list") String path) {
-        if (path == null || path.isBlank()) {
-            path = ".";
+    @Tool("Recursively list the contents of a directory to understand project structure. Automatically ignores noisy folders like .git, target, and node_modules.")
+    public String listDirectory(@P("The absolute or relative path to the directory") String directoryPath) {
+        if (directoryPath == null || directoryPath.isBlank()) {
+            directoryPath = ".";
+        }
+        Path start = Paths.get(directoryPath);
+        if (!Files.exists(start)) {
+            return "Error: Directory does not exist.";
         }
 
-        try {
-            Path targetPath = Paths.get(path);
-            if (!Files.exists(targetPath)) {
-                return "Error: Path does not exist: " + path;
-            }
-            if (!Files.isDirectory(targetPath)) {
-                return "Error: Path is not a directory: " + path;
+        StringBuilder sb = new StringBuilder("Project Structure for " + directoryPath + ":\n");
+        try (Stream<Path> stream = Files.walk(start, 4)) {
+            List<String> files = stream
+                    .map(Path::toString)
+                    // Hard-exclude massive/hidden directories to preserve LLM context
+                    .filter(path -> !path.contains(".git")
+                            && !path.contains("target")
+                            && !path.contains(".idea")
+                            && !path.contains("node_modules")
+                            && !path.contains("build"))
+                    .limit(100) // Protect context window
+                    .toList();
+
+            for (String file : files) {
+                sb.append(file).append("\n");
             }
 
-            try (Stream<Path> stream = Files.list(targetPath)) {
-                String listing = stream
-                        .map(p -> {
-                            String name = p.getFileName().toString();
-                            return Files.isDirectory(p) ? "[DIR]  " + name : "[FILE] " + name;
-                        })
-                        .sorted()
-                        .collect(Collectors.joining(System.lineSeparator()));
-
-                return listing.isEmpty() ? "[Directory is empty]" : listing;
+            if (files.size() == 100) {
+                sb.append("... [DIRECTORY TRUNCATED TO PRESERVE CONTEXT. BE MORE SPECIFIC] ...\n");
             }
-        } catch (Exception e) {
-            log.error("Failed to list directory: " + path, e);
-            return "Error: Could not list directory: " + e.getMessage();
+        } catch (IOException e) {
+            return "Error reading directory: " + e.getMessage();
         }
+        return sb.toString();
     }
 
     /**
@@ -244,11 +248,11 @@ public class TerminalTools {
     public String searchDirectory(
             @P("directory path to search") String directoryPath,
             @P("keyword to search for within text files") String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) {
+            return "Error: You must provide a specific keyword to search for. If you just want to see the files, use listDirectory instead.";
+        }
         if (directoryPath == null || directoryPath.isBlank()) {
             directoryPath = ".";
-        }
-        if (keyword == null || keyword.isBlank()) {
-            return "Error: Search keyword cannot be empty.";
         }
 
         log.info("Tool Call: searchDirectory(directoryPath='{}', keyword='{}')", directoryPath, keyword);
