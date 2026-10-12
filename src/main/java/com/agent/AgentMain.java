@@ -4,6 +4,7 @@ import com.agent.config.AgentConfig;
 import com.agent.factory.OllamaModelFactory;
 import com.agent.factory.SubAgentFactory;
 import com.agent.registry.ToolRegistry;
+import com.agent.tools.DelegationTool;
 import com.agent.tools.GitTools;
 import com.agent.tools.MemoryTools;
 import com.agent.tools.TerminalTools;
@@ -11,9 +12,11 @@ import com.agent.tools.WebTools;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
+import dev.langchain4j.service.AiServices;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
@@ -25,21 +28,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 
 /**
- * Phase 7, Milestone 7.1.2: The SubAgentFactory Execution Verification.
+ * Phase 7, Milestone 7.2: The Swarm Orchestrator Verification.
  */
 public class AgentMain {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Agent - Milestone 7.1.2 SubAgentFactory Verification");
+        log.info("Starting Computer Agent - Milestone 7.2 Swarm Orchestrator Active");
 
         try {
-            // 1. Shared Scanner for HITL tool security confirmation
+            // 1. Shared Scanner for both chat input and HITL tool security confirmation
             Scanner scanner = new Scanner(System.in);
 
             // 2. Initialize Local Vector Store & In-Process ONNX Embedding Model
@@ -79,51 +84,83 @@ public class AgentMain {
                 configs = mapper.readValue(is, new TypeReference<List<AgentConfig>>() {});
             }
 
-            AgentConfig researcherConfig = configs.stream()
-                    .filter(c -> "web_researcher".equals(c.id()))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("web_researcher config not found in agents.json"));
+            // 7. Initialize the Swarm map of specialized sub-agents
+            Map<String, WorkerAgent> swarm = new HashMap<>();
+            for (AgentConfig config : configs) {
+                log.info("Spawning swarm sub-agent: '{}' [{}]", config.name(), config.id());
+                swarm.put(config.id(), factory.createAgent(config));
+            }
 
-            AgentConfig patcherConfig = configs.stream()
-                    .filter(c -> "code_patcher".equals(c.id()))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("code_patcher config not found in agents.json"));
+            // 8. Create the Delegation Tool holding the swarm
+            DelegationTool delegationTool = new DelegationTool(swarm);
 
-            System.out.println("=======================================================");
-            System.out.println("Multi-Agent Swarm: SubAgentFactory Dynamic Workers");
-            System.out.println("=======================================================");
+            // 9. Build the Manager's dynamic prompt
+            StringBuilder managerPrompt = new StringBuilder(
+                    "You are the Swarm Orchestrator. You do not have direct access to the OS, filesystem, or web.\n" +
+                    "To fulfill the user's request, you must delegate tasks to your specialized sub-agents using the delegateTask tool.\n\n" +
+                    "Available agents:\n"
+            );
+            for (AgentConfig config : configs) {
+                managerPrompt.append("- ").append(config.id()).append(": ").append(config.name())
+                        .append(" - ").append(config.systemMessage()).append("\n");
+            }
+            managerPrompt.append("\nChain delegations if necessary. Synthesize their responses into a final answer for the user.");
 
-            // 7. Dynamically spawn specialized sub-agents
-            WorkerAgent researcher = factory.createAgent(researcherConfig);
-            WorkerAgent patcher = factory.createAgent(patcherConfig);
+            // 10. Instantiate the Swarm Orchestrator
+            WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)
+                    .chatLanguageModel(model)
+                    .chatMemory(MessageWindowChatMemory.withMaxMessages(20))
+                    .tools(delegationTool)
+                    .systemMessageProvider(chatMemoryId -> managerPrompt.toString())
+                    .build();
 
-            // 8. Test the Web Researcher
-            System.out.println("\n-------------------------------------------------------");
-            System.out.println("Executing Sub-Agent 1: " + researcherConfig.name() + " (Tools: " + researcherConfig.tools() + ")");
-            System.out.println("-------------------------------------------------------");
-            String researchTask = "Search the web for the Wikipedia page on 'Swarm Intelligence' and summarize it in one sentence.";
-            System.out.println("Task > " + researchTask);
-            String researchResult = researcher.execute(researchTask);
-            System.out.println("\nResearcher Response > " + (researchResult != null ? researchResult.trim() : ""));
-
-            // 9. Prepare dummy.txt and test Code Patcher
+            // 11. Prepare fresh dummy.txt with 3 lines of text
             Path dummyPath = Paths.get("dummy.txt");
-            Files.writeString(dummyPath, "Line 1: Initial System State\nLine 2: Standby Mode\nLine 3: Operations Nominal\n");
+            Files.writeString(dummyPath, "Line 1: Initial System State\nLine 2: Server Port Pending\nLine 3: Operations Nominal\n");
 
-            System.out.println("\n-------------------------------------------------------");
-            System.out.println("Executing Sub-Agent 2: " + patcherConfig.name() + " (Tools: " + patcherConfig.tools() + ")");
-            System.out.println("Initial dummy.txt content:\n" + Files.readString(dummyPath).trim());
-            System.out.println("-------------------------------------------------------");
-            String patchTask = "Read lines 1 to 3 of dummy.txt and replace line 2 with 'Agent Swarm Active'.";
-            System.out.println("Task > " + patchTask);
-            String patchResult = patcher.execute(patchTask);
-            System.out.println("\nPatcher Response > " + (patchResult != null ? patchResult.trim() : ""));
-            System.out.println("\nPost-patch dummy.txt content:\n" + Files.readString(dummyPath).trim());
             System.out.println("=======================================================");
+            System.out.println("Swarm Orchestrator CLI Active");
+            System.out.println("Available Sub-Agents: " + swarm.keySet());
+            System.out.println("Type your prompt below. Type 'exit' or 'quit' to terminate.");
+            System.out.println("=======================================================\n");
+
+            // 12. Interactive CLI loop
+            while (true) {
+                System.out.print("User > ");
+                System.out.flush();
+
+                if (!scanner.hasNextLine()) {
+                    break;
+                }
+
+                String input = scanner.nextLine().trim();
+
+                if (input.isEmpty()) {
+                    continue;
+                }
+
+                if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
+                    System.out.println("Orchestrator > Swarm session terminated. Goodbye!");
+                    break;
+                }
+
+                if ("y".equalsIgnoreCase(input) || "yes".equalsIgnoreCase(input) || "n".equalsIgnoreCase(input) || "no".equalsIgnoreCase(input)) {
+                    continue;
+                }
+
+                try {
+                    String response = orchestrator.execute(input);
+                    System.out.println("\nOrchestrator > " + (response != null ? response.trim() : ""));
+                    System.out.println();
+                } catch (Exception e) {
+                    log.error("Error executing orchestrator prompt", e);
+                    System.err.println("Orchestrator > Error communicating with swarm: " + e.getMessage());
+                }
+            }
 
         } catch (Exception e) {
-            log.error("Fatal error during worker agent execution", e);
-            System.err.println("ERROR: Could not execute worker agents: " + e.getMessage());
+            log.error("Fatal error during swarm orchestrator initialization", e);
+            System.err.println("ERROR: Could not initialize orchestrator: " + e.getMessage());
             System.exit(1);
         }
     }
