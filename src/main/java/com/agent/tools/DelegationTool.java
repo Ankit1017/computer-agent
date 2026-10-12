@@ -68,6 +68,60 @@ public class DelegationTool {
         }
     }
 
+    /**
+     * Delegates multiple independent tasks to sub-agents simultaneously using Java 21 Virtual Threads.
+     *
+     * @param agentIds list of target agent IDs
+     * @param tasks    list of exact tasks matching the order of agent IDs
+     * @return combined string output of all sub-agent responses
+     */
+    @Tool("Delegate multiple independent tasks to sub-agents SIMULTANEOUSLY. Always use this instead of sequential delegation when tasks do not depend on each other's outputs.")
+    public String delegateParallel(
+            @P("List of target agent IDs") java.util.List<String> agentIds,
+            @P("List of exact tasks, matching the order of agent IDs") java.util.List<String> tasks) {
+
+        if (agentIds == null || tasks == null) {
+            return "Error: agentIds and tasks lists must not be null.";
+        }
+
+        if (agentIds.size() != tasks.size()) {
+            return "Error: agentIds list and tasks list must be the same size.";
+        }
+
+        StringBuilder combinedResult = new StringBuilder();
+        // Use Java 21 Virtual Threads for lightweight concurrency
+        try (java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            java.util.List<java.util.concurrent.Callable<String>> callables = new java.util.ArrayList<>();
+
+            for (int i = 0; i < agentIds.size(); i++) {
+                String agentId = agentIds.get(i);
+                String task = tasks.get(i);
+                WorkerAgent agent = swarm.get(agentId != null ? agentId.trim() : "");
+
+                if (agent == null) {
+                    callables.add(() -> "[Response from " + agentId + "]: Error - Unknown agent ID.");
+                } else {
+                    callables.add(() -> {
+                        System.out.println("\n[ORCHESTRATOR-PARALLEL] Dispatching to '" + agentId + "': " + task);
+                        System.out.flush();
+                        return "[Response from " + agentId + "]: " + agent.execute(task);
+                    });
+                }
+            }
+
+            // Execute all threads concurrently and wait for completion
+            java.util.List<java.util.concurrent.Future<String>> futures = executor.invokeAll(callables);
+            for (java.util.concurrent.Future<String> future : futures) {
+                combinedResult.append(future.get()).append("\n\n");
+            }
+        } catch (Exception e) {
+            log.error("Error executing parallel tasks", e);
+            return "Error executing parallel tasks: " + e.getMessage();
+        }
+
+        return combinedResult.toString().trim();
+    }
+
     public Map<String, WorkerAgent> getSwarm() {
         return swarm;
     }

@@ -96,15 +96,16 @@ public class AgentMain {
 
             // 9. Build the Manager's dynamic prompt
             StringBuilder managerPrompt = new StringBuilder(
-                    "You are the Swarm Orchestrator. You do not have direct access to the OS, filesystem, or web.\n" +
-                    "To fulfill the user's request, you must delegate tasks to your specialized sub-agents using the delegateTask tool.\n\n" +
+                    "You are the Swarm Orchestrator. You do not have direct access to the OS or web.\n" +
+                    "To fulfill the user's request, delegate tasks to sub-agents.\n" +
+                    "CRITICAL: If you have multiple tasks that do not depend on each other, you MUST use the delegateParallel tool to execute them simultaneously.\n" +
                     "Available agents:\n"
             );
             for (AgentConfig config : configs) {
                 managerPrompt.append("- ").append(config.id()).append(": ").append(config.name())
                         .append(" - ").append(config.systemMessage()).append("\n");
             }
-            managerPrompt.append("\nChain delegations if necessary. Synthesize their responses into a final answer for the user.");
+            managerPrompt.append("\nWhen tasks are independent, ALWAYS use delegateParallel. When tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)
@@ -116,7 +117,7 @@ public class AgentMain {
 
             // 11. Prepare fresh dummy.txt with 3 lines of text
             Path dummyPath = Paths.get("dummy.txt");
-            Files.writeString(dummyPath, "Line 1: Initial System State\nLine 2: Server Port Pending\nLine 3: Operations Nominal\n");
+            Files.writeString(dummyPath, "Line 1: Initial System State\nLine 2: Server Port 5000\nLine 3: Java Target Pending\n");
 
             System.out.println("=======================================================");
             System.out.println("Swarm Orchestrator CLI Active");
