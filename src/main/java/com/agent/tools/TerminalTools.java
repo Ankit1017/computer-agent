@@ -304,19 +304,21 @@ public class TerminalTools {
     @Tool("Read a specific range of lines from a file. Use this to inspect large files safely.")
     public String readFileLines(
             @P("path to file") String path,
-            @P("1-based start line number") int startLine,
-            @P("1-based end line number") int endLine) {
+            @P("1-based start line number") Integer startLine,
+            @P("1-based end line number") Integer endLine) {
         if (path == null || path.isBlank()) {
             return "Error: File path cannot be empty.";
         }
-        if (startLine < 1 || endLine < startLine) {
-            return "Error: Invalid line range: startLine=" + startLine + ", endLine=" + endLine;
+        int start = startLine != null ? startLine : 1;
+        int end = endLine != null ? endLine : start + 50;
+        if (start < 1 || end < start) {
+            return "Error: Invalid line range: startLine=" + start + ", endLine=" + end;
         }
-        if ((endLine - startLine) > MAX_LINE_RANGE) {
+        if ((end - start) > MAX_LINE_RANGE) {
             return "Error: Line range too large. Request 200 lines or fewer.";
         }
 
-        log.info("Tool Call: readFileLines(path='{}', startLine={}, endLine={})", path, startLine, endLine);
+        log.info("Tool Call: readFileLines(path='{}', startLine={}, endLine={})", path, start, end);
 
         try {
             Path targetPath = Paths.get(path);
@@ -329,16 +331,16 @@ public class TerminalTools {
 
             try (Stream<String> lines = Files.lines(targetPath, StandardCharsets.UTF_8)) {
                 List<String> slice = lines
-                        .skip(startLine - 1)
-                        .limit((long) endLine - startLine + 1)
+                        .skip(start - 1)
+                        .limit((long) end - start + 1)
                         .collect(Collectors.toList());
 
                 if (slice.isEmpty()) {
-                    return "[No lines found in requested range " + startLine + "-" + endLine + "]";
+                    return "[No lines found in requested range " + start + "-" + end + "]";
                 }
 
                 StringBuilder sb = new StringBuilder();
-                int currentLine = startLine;
+                int currentLine = start;
                 for (String line : slice) {
                     sb.append(currentLine++).append(": ").append(line).append(System.lineSeparator());
                 }
@@ -362,11 +364,14 @@ public class TerminalTools {
     @Tool("Replace specific lines in an existing file with new content. Use this to patch code or text without rewriting the whole file.")
     public String replaceLinesInFile(
             @P("path to file") String path,
-            @P("1-based start line number to replace") int startLine,
-            @P("1-based end line number to replace") int endLine,
+            @P("1-based start line number to replace") Integer startLine,
+            @P("1-based end line number to replace") Integer endLine,
             @P("new content to insert") String newContent) {
         if (path == null || path.isBlank()) {
             return "Error: File path cannot be empty.";
+        }
+        if (startLine == null || endLine == null) {
+            return "Error: startLine and endLine must not be null.";
         }
         if (startLine < 1 || endLine < startLine) {
             return "Error: Invalid line range: startLine=" + startLine + ", endLine=" + endLine;

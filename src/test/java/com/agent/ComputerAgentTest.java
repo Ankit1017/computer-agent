@@ -53,7 +53,7 @@ class ComputerAgentTest {
         List<ChatMessage> firstTurnMessages = capturedHistories.get(0);
         assertThat(firstTurnMessages).hasSize(2);
         assertThat(firstTurnMessages.get(0).type()).isEqualTo(ChatMessageType.SYSTEM);
-        assertThat(firstTurnMessages.get(0).text()).contains("autonomous computer use agent");
+        assertThat(firstTurnMessages.get(0).text()).contains("CORE DIRECTIVES");
         assertThat(firstTurnMessages.get(1).type()).isEqualTo(ChatMessageType.USER);
         assertThat(firstTurnMessages.get(1).text()).isEqualTo("System ping");
 

@@ -69,6 +69,10 @@ public class AgentMain {
                     break;
                 }
 
+                if ("y".equalsIgnoreCase(input) || "yes".equalsIgnoreCase(input) || "n".equalsIgnoreCase(input) || "no".equalsIgnoreCase(input)) {
+                    continue;
+                }
+
                 try {
                     String response = agent.chat(input);
                     System.out.println("Agent > " + (response != null ? response.trim() : ""));
