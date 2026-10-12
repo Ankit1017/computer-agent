@@ -1,0 +1,101 @@
+package com.agent.registry;
+
+import com.agent.config.AgentConfig;
+import com.agent.tools.GitTools;
+import com.agent.tools.MemoryTools;
+import com.agent.tools.TerminalTools;
+import com.agent.tools.WebTools;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
+import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.io.InputStream;
+import java.util.List;
+import java.util.Scanner;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class ToolRegistryTest {
+
+    private ToolRegistry registry;
+    private TerminalTools terminalTools;
+    private GitTools gitTools;
+    private WebTools webTools;
+    private MemoryTools memoryTools;
+
+    @BeforeEach
+    void setUp() {
+        Scanner scanner = new Scanner(System.in);
+        terminalTools = new TerminalTools(scanner);
+        gitTools = new GitTools(scanner);
+        webTools = new WebTools(scanner);
+        memoryTools = new MemoryTools(new AllMiniLmL6V2EmbeddingModel(), new InMemoryEmbeddingStore<TextSegment>());
+
+        registry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools);
+    }
+
+    @Test
+    @DisplayName("Should successfully resolve tools for web_researcher")
+    void shouldResolveWebResearcherTools() {
+        Object[] tools = registry.getTools(List.of("web", "memory"));
+
+        assertThat(tools).hasSize(2);
+        assertThat(tools[0]).isSameAs(webTools);
+        assertThat(tools[1]).isSameAs(memoryTools);
+    }
+
+    @Test
+    @DisplayName("Should successfully resolve tools for code_patcher")
+    void shouldResolveCodePatcherTools() {
+        Object[] tools = registry.getTools(List.of("terminal"));
+
+        assertThat(tools).hasSize(1);
+        assertThat(tools[0]).isSameAs(terminalTools);
+    }
+
+    @Test
+    @DisplayName("Should return empty array when requested tools list is empty or null")
+    void shouldHandleEmptyOrNullTools() {
+        assertThat(registry.getTools(null)).isEmpty();
+        assertThat(registry.getTools(List.of())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should throw IllegalArgumentException when unknown tool is requested")
+    void shouldThrowOnUnknownTool() {
+        assertThatThrownBy(() -> registry.getTools(List.of("unknown_tool")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unknown tool requested: 'unknown_tool'");
+    }
+
+    @Test
+    @DisplayName("Should deserialize agents.json and verify all defined tools resolve in ToolRegistry")
+    void shouldDeserializeAgentsJsonAndResolveTools() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        InputStream is = getClass().getClassLoader().getResourceAsStream("agents.json");
+        assertThat(is).isNotNull();
+
+        List<AgentConfig> configs = mapper.readValue(is, new TypeReference<List<AgentConfig>>() {});
+        assertThat(configs).hasSize(2);
+
+        // Verify web_researcher
+        AgentConfig researcher = configs.stream().filter(c -> "web_researcher".equals(c.id())).findFirst().orElseThrow();
+        assertThat(researcher.name()).isEqualTo("Web Researcher");
+        assertThat(researcher.tools()).containsExactly("web", "memory");
+        Object[] researcherTools = registry.getTools(researcher.tools());
+        assertThat(researcherTools).hasSize(2);
+
+        // Verify code_patcher
+        AgentConfig patcher = configs.stream().filter(c -> "code_patcher".equals(c.id())).findFirst().orElseThrow();
+        assertThat(patcher.name()).isEqualTo("Code Patcher");
+        assertThat(patcher.tools()).containsExactly("terminal");
+        Object[] patcherTools = registry.getTools(patcher.tools());
+        assertThat(patcherTools).hasSize(1);
+    }
+}
