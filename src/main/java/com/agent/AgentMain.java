@@ -2,6 +2,14 @@ package com.agent;
 
 import com.agent.factory.OllamaModelFactory;
 import com.agent.tools.GitTools;
+import com.agent.tools.MemoryTools;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
+import dev.langchain4j.rag.content.retriever.ContentRetriever;
+import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
+import dev.langchain4j.store.embedding.EmbeddingStore;
+import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import com.agent.tools.TerminalTools;
 import com.agent.tools.WebTools;
 import dev.langchain4j.memory.ChatMemory;
@@ -11,17 +19,18 @@ import dev.langchain4j.service.AiServices;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.Scanner;
 
 /**
- * Phase 4, Milestone 4.1: Web Scraper with Safe Text Truncation.
+ * Phase 6, Milestone 6.1: The Local Vector Store (RAG) with ChromaDB and all-MiniLM-L6-v2.
  */
 public class AgentMain {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Use AI Agent - Milestone 4.2 Web & API Tools Active");
+        log.info("Starting Computer Use AI Agent - Milestone 6.1 Local Vector Store (RAG) Active");
 
         try {
             // 1. Shared Scanner for both chat input and HITL tool security confirmation
@@ -33,16 +42,34 @@ public class AgentMain {
             // 3. Initialize the sliding-window ChatMemory
             ChatMemory memory = MessageWindowChatMemory.withMaxMessages(20);
 
-            // 4. Instantiate Terminal, Git, and Web Tools with the shared console scanner
+            // 4. Initialize Local Vector Store & In-Process ONNX Embedding Model
+            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+            EmbeddingStore<TextSegment> embeddingStore = ChromaEmbeddingStore.builder()
+                    .baseUrl("http://localhost:8000")
+                    .collectionName("agent_memory")
+                    .timeout(Duration.ofSeconds(30))
+                    .build();
+
+            // 5. Build ContentRetriever for autonomous RAG injection
+            ContentRetriever contentRetriever = EmbeddingStoreContentRetriever.builder()
+                    .embeddingStore(embeddingStore)
+                    .embeddingModel(embeddingModel)
+                    .maxResults(3)
+                    .minScore(0.6)
+                    .build();
+
+            // 6. Instantiate Tools
             TerminalTools tools = new TerminalTools(scanner);
             GitTools gitTools = new GitTools(scanner);
             WebTools webTools = new WebTools(scanner);
+            MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);
 
-            // 5. Build the ComputerAgent proxy with bound tools
+            // 7. Build the ComputerAgent proxy with bound tools and RAG content retriever
             ComputerAgent agent = AiServices.builder(ComputerAgent.class)
                     .chatLanguageModel(model)
                     .chatMemory(memory)
-                    .tools(webTools, tools, gitTools)
+                    .contentRetriever(contentRetriever)
+                    .tools(memoryTools, webTools, tools, gitTools)
                     .build();
 
             System.out.println("=======================================================");

@@ -3,3 +3,5 @@ target/
 .idea/
 *.iml
 .planning/
+chroma_data/
+*.log

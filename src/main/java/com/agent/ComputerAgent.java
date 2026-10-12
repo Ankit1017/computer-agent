@@ -21,6 +21,7 @@ public interface ComputerAgent {
                - Apply the fix using `replaceLinesInFile`.
                - Execute the script again. 
                - Only return a final text response to the user once the loop succeeds or if you exhaust all logical fixes.
+            5. LONG-TERM MEMORY: When the user asks you to remember, save, or store a fact, preference, or architectural decision to long-term memory, call the `saveToLongTermMemory` tool. Relevant context from long-term memory is automatically retrieved for your answers.
             """)
     String chat(String userMessage);
 }
