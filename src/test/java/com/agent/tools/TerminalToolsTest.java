@@ -147,7 +147,7 @@ class TerminalToolsTest {
     }
 
     @Test
-    @DisplayName("Should search directory and return files containing the keyword")
+    @DisplayName("Should search directory and return files containing the keyword with line numbers")
     void shouldSearchDirectoryForKeyword(@TempDir Path tempDir) throws IOException {
         Path matchFile = tempDir.resolve("app.log");
         Files.writeString(matchFile, "Line 1\nTarget keyword CRITICAL_ERROR found\nLine 3");
@@ -156,15 +156,36 @@ class TerminalToolsTest {
         Files.writeString(nonMatchFile, "Line 1\nAll clear\nLine 3");
 
         Path binaryFile = tempDir.resolve("image.png");
-        Files.writeString(binaryFile, "CRITICAL_ERROR in binary");
+        byte[] binaryData = {0x00, 0x43, 0x52, 0x49, 0x54, 0x49, 0x43, 0x41, 0x4C, 0x5F, 0x45, 0x52, 0x52, 0x4F, 0x52};
+        Files.write(binaryFile, binaryData);
 
         Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
         TerminalToolsFacade tools = createTools(scanner);
 
-        String result = tools.searchDirectory(tempDir.toString(), "CRITICAL_ERROR");
+        String result = tools.searchDirectory(tempDir.toString(), "CRITICAL_ERROR", ".log");
         assertThat(result).contains("app.log");
+        assertThat(result).contains("Line 2: Target keyword CRITICAL_ERROR found");
         assertThat(result).doesNotContain("other.log");
         assertThat(result).doesNotContain("image.png");
+    }
+
+    @Test
+    @DisplayName("Should search directory using regex pattern and filter by file extension")
+    void shouldSearchDirectoryWithRegexAndExtensionFilter(@TempDir Path tempDir) throws IOException {
+        Path javaFile = tempDir.resolve("UserServiceFacade.java");
+        Files.writeString(javaFile, "package com.example;\n\npublic class UserServiceFacade {\n}\n");
+
+        Path txtFile = tempDir.resolve("notes.txt");
+        Files.writeString(txtFile, "public class NoteServiceFacade is here\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        // Search for regex matching class definition, filtering specifically for .java
+        String result = tools.searchDirectory(tempDir.toString(), "public class .*Facade", ".java");
+        assertThat(result).contains("UserServiceFacade.java");
+        assertThat(result).contains("Line 3: public class UserServiceFacade {");
+        assertThat(result).doesNotContain("notes.txt");
     }
 
     @Test

@@ -63,11 +63,12 @@ public class TerminalToolsFacade {
         return fileService.writeFile(path, content);
     }
 
-    @Tool("Search all text files in a directory for a specific keyword. Returns a list of files containing the keyword.")
+    @Tool("Recursively search directory files for a regex or keyword. Provides exact line numbers of matches.")
     public String searchDirectory(
-            @P("directory path to search") String directoryPath,
-            @P("keyword to search for within text files") String keyword) {
-        return fileService.searchDirectory(directoryPath, keyword);
+            @P("The path to the directory") String directoryPath,
+            @P("The keyword or Regex pattern to search for") String keyword,
+            @P("Optional file extension to filter by (e.g., '.java' or '.md'). Leave blank for all text files.") String fileExtension) {
+        return fileService.searchDirectory(directoryPath, keyword, fileExtension);
     }
 
     @Tool("Read specific lines from a text file with line numbers. STRICT LIMIT: Max 500 lines per read. Automatically rejects binary files. Use this for safe, paginated file inspection.")

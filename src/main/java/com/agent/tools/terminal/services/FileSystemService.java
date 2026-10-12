@@ -12,6 +12,8 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -137,18 +139,8 @@ public class FileSystemService {
         }
 
         // 1. Binary Safeguard: probe first 1024 bytes for null characters (0x00)
-        try (java.io.InputStream is = Files.newInputStream(path)) {
-            byte[] buffer = new byte[1024];
-            int bytesRead = is.read(buffer);
-            if (bytesRead > 0) {
-                for (int i = 0; i < bytesRead; i++) {
-                    if (buffer[i] == 0x00) {
-                        return "Error: File appears to be binary. Cannot read contents into context.";
-                    }
-                }
-            }
-        } catch (IOException e) {
-            return "Error probing file type: " + e.getMessage();
+        if (isBinaryFile(path)) {
+            return "Error: File appears to be binary. Cannot read contents into context.";
         }
 
         // 2. Pagination limits
@@ -186,60 +178,106 @@ public class FileSystemService {
     }
 
     /**
-     * Searches all text files in a directory for a keyword up to depth 3.
+     * Recursively searches directory files for a regex or keyword pattern.
+     * Enforces file extension filtering, ignores binary files and common noisy build folders,
+     * and caps global matches at 50 to protect context window limits.
      *
-     * @param directoryPath target directory to search
-     * @param keyword       search keyword
-     * @return matching file paths
+     * @param directoryPath path to directory
+     * @param keyword       regex or literal keyword
+     * @param fileExtension optional extension filter (e.g. ".java"), or null/blank for all text files
+     * @return formatted search results with file names and matched line numbers
      */
-    public String searchDirectory(String directoryPath, String keyword) {
+    public String searchDirectory(String directoryPath, String keyword, String fileExtension) {
         if (keyword == null || keyword.trim().isEmpty()) {
-            return "Error: You must provide a specific keyword to search for. If you just want to see the files, use listDirectory instead.";
+            return "Error: You must provide a specific keyword/regex to search for.";
         }
+
         if (directoryPath == null || directoryPath.isBlank()) {
             directoryPath = ".";
         }
 
-        log.info("FileSystemService: searchDirectory(directoryPath='{}', keyword='{}')", directoryPath, keyword);
+        Path start = Paths.get(directoryPath).toAbsolutePath().normalize();
+        if (!Files.exists(start)) return "Error: Directory does not exist.";
+        if (!Files.isDirectory(start)) return "Error: Path is not a directory: " + directoryPath;
 
+        // Compile regex, fallback to literal match if invalid regex provided
+        Pattern pattern;
         try {
-            Path targetDir = Paths.get(directoryPath);
-            if (!Files.exists(targetDir)) {
-                return "Error: Directory path does not exist: " + directoryPath;
-            }
-            if (!Files.isDirectory(targetDir)) {
-                return "Error: Path is not a directory: " + directoryPath;
-            }
+            pattern = Pattern.compile(keyword, Pattern.CASE_INSENSITIVE);
+        } catch (PatternSyntaxException e) {
+            pattern = Pattern.compile(Pattern.quote(keyword), Pattern.CASE_INSENSITIVE);
+        }
 
-            try (Stream<Path> stream = Files.walk(targetDir, MAX_SEARCH_DEPTH)) {
-                List<String> matches = stream
-                        .filter(Files::isRegularFile)
-                        .filter(p -> {
-                            String fileName = p.getFileName().toString().toLowerCase();
-                            return BINARY_EXTENSIONS.stream().noneMatch(fileName::endsWith);
-                        })
-                        .filter(p -> {
-                            try (Stream<String> lines = Files.lines(p, StandardCharsets.UTF_8)) {
-                                return lines.anyMatch(line -> line.contains(keyword));
-                            } catch (Exception ignored) {
-                                return false;
-                            }
-                        })
-                        .limit(MAX_SEARCH_MATCHES)
-                        .map(Path::toString)
-                        .collect(Collectors.toList());
+        StringBuilder sb = new StringBuilder("Search Results for '" + keyword + "' in " + directoryPath + ":\n");
+        int globalMatchCount = 0;
 
-                if (matches.isEmpty()) {
-                    return "No text files found containing keyword: '" + keyword + "'";
+        // AST Parsing Hook Stub
+        // if (".java".equalsIgnoreCase(fileExtension)) { 
+        //    // Future integration: Route to JavaParserService for semantic AST search
+        // }
+
+        try (Stream<Path> stream = Files.walk(start)) {
+            List<Path> files = stream
+                .filter(Files::isRegularFile)
+                .filter(path -> !path.toString().replace("\\", "/").matches("(?i).*(\\.git|target|node_modules|\\.idea|build|dist|out|venv|__pycache__).*"))
+                .filter(path -> fileExtension == null || fileExtension.isBlank() || path.toString().endsWith(fileExtension))
+                .toList();
+
+            for (Path path : files) {
+                if (globalMatchCount >= 50) break;
+
+                // Binary Safeguard (Reuse 1024-byte probe logic)
+                if (isBinaryFile(path)) continue; 
+
+                List<String> fileMatches = new ArrayList<>();
+                try (Stream<String> lines = Files.lines(path, StandardCharsets.UTF_8)) {
+                    int[] lineNumber = {1};
+                    Pattern finalPattern = pattern;
+                    lines.forEach(line -> {
+                        if (finalPattern.matcher(line).find()) {
+                            fileMatches.add("  Line " + lineNumber[0] + ": " + line.trim());
+                        }
+                        lineNumber[0]++;
+                    });
+                } catch (Exception ignored) {
+                    // Skip files that fail UTF-8 decoding during line streaming
                 }
 
-                return "Matching files found containing '" + keyword + "' (max " + MAX_SEARCH_MATCHES + "):\n"
-                        + matches.stream().map(m -> "- " + m).collect(Collectors.joining("\n"));
+                if (!fileMatches.isEmpty()) {
+                    sb.append("\nFile: ").append(start.relativize(path)).append("\n");
+                    for (String match : fileMatches) {
+                        if (globalMatchCount >= 50) break;
+                        sb.append(match).append("\n");
+                        globalMatchCount++;
+                    }
+                }
+            }
+
+            if (globalMatchCount == 0) {
+                sb.append("\nNo matches found.");
+            } else if (globalMatchCount >= 50) {
+                sb.append("\n... [SEARCH TRUNCATED AT 50 MATCHES TO PRESERVE CONTEXT] ...");
             }
         } catch (Exception e) {
-            log.error("Failed to search directory: " + directoryPath, e);
-            return "Error: Search failed: " + e.getMessage();
+            return "Error searching directory: " + e.getMessage();
         }
+
+        return sb.toString();
+    }
+
+    private boolean isBinaryFile(Path path) {
+        try (java.io.InputStream is = Files.newInputStream(path)) {
+            byte[] buffer = new byte[1024];
+            int bytesRead = is.read(buffer);
+            if (bytesRead > 0) {
+                for (int i = 0; i < bytesRead; i++) {
+                    if (buffer[i] == 0x00) return true;
+                }
+            }
+        } catch (Exception e) {
+            return true;
+        }
+        return false;
     }
 
     /**
