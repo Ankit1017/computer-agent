@@ -11,8 +11,10 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
@@ -332,58 +334,97 @@ public class FileSystemService {
     }
 
     /**
-     * Replaces targeted lines in an existing file with replacement content.
+     * Replaces specific lines in a file, creating an automatic .bak backup.
      *
-     * @param path       target file path
-     * @param startLine  1-based start line index
-     * @param endLine    1-based end line index
-     * @param newContent content to insert
-     * @return confirmation message
+     * @param filePath  target file path
+     * @param startLine 1-based start line index
+     * @param endLine   1-based end line index (inclusive)
+     * @param content   replacement string content
+     * @return confirmation or error message
      */
-    public String replaceLines(String path, Integer startLine, Integer endLine, String newContent) {
-        if (path == null || path.isBlank()) {
+    public String replaceLines(String filePath, int startLine, int endLine, String content) {
+        if (filePath == null || filePath.isBlank()) {
             return "Error: File path cannot be empty.";
         }
-        if (startLine == null || endLine == null) {
-            return "Error: startLine and endLine must not be null.";
-        }
-        if (startLine < 1 || endLine < startLine) {
-            return "Error: Invalid line range: startLine=" + startLine + ", endLine=" + endLine;
-        }
+        Path path = Paths.get(filePath);
+        if (!Files.exists(path)) return "Error: File does not exist.";
+        if (Files.isDirectory(path)) return "Error: Path is a directory, not a file.";
 
         try {
-            Path targetPath = Paths.get(path);
-            if (!Files.exists(targetPath)) {
-                return "Error: File does not exist: " + path;
-            }
-            if (Files.isDirectory(targetPath)) {
-                return "Error: Path is a directory, not a file: " + path;
-            }
+            // Automatic Backup
+            Path backupPath = Paths.get(filePath + ".bak");
+            Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
 
-            List<String> lines = new ArrayList<>(Files.readAllLines(targetPath, StandardCharsets.UTF_8));
-            if (startLine > lines.size()) {
-                return "Error: startLine " + startLine + " exceeds file line count (" + lines.size() + ")";
-            }
+            List<String> lines = new ArrayList<>(Files.readAllLines(path, StandardCharsets.UTF_8));
 
-            int effectiveEndLine = Math.min(endLine, lines.size());
-
-            // Remove existing lines in range [startLine - 1, effectiveEndLine)
-            lines.subList(startLine - 1, effectiveEndLine).clear();
-
-            // Insert newContent at startLine - 1
-            if (newContent != null && !newContent.isEmpty()) {
-                String[] replacementLines = newContent.split("\\r?\\n", -1);
-                for (int i = 0; i < replacementLines.length; i++) {
-                    lines.add(startLine - 1 + i, replacementLines[i]);
-                }
+            // Bounds checking
+            if (startLine < 1) startLine = 1;
+            if (endLine > lines.size()) endLine = lines.size();
+            if (startLine > endLine || startLine > lines.size()) {
+                return "Error: Invalid line ranges. File only has " + lines.size() + " lines.";
             }
 
-            Files.write(targetPath, lines, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            return "Successfully patched lines " + startLine + " to " + endLine + " in " + path;
+            // Remove old lines
+            lines.subList(startLine - 1, endLine).clear();
 
-        } catch (IOException e) {
-            log.error("Failed to patch file lines: " + path, e);
-            return "Error: Could not patch file lines: " + e.getMessage();
+            // Insert new lines
+            if (content != null && !content.isEmpty()) {
+                String[] newLines = content.split("\r?\n");
+                lines.addAll(startLine - 1, Arrays.asList(newLines));
+            }
+
+            Files.write(path, lines, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
+            return "Successfully replaced lines " + startLine + " to " + endLine + ". Original backed up to .bak";
+
+        } catch (Exception e) {
+            return "Error replacing lines: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Searches for a Regex pattern in a file and replaces matches, creating an automatic .bak backup.
+     * Supports MULTILINE and DOTALL flags.
+     *
+     * @param filePath    target file path
+     * @param regex       regular expression pattern to search for
+     * @param replacement replacement text
+     * @return confirmation or error message
+     */
+    public String regexReplaceInFile(String filePath, String regex, String replacement) {
+        if (filePath == null || filePath.isBlank()) {
+            return "Error: File path cannot be empty.";
+        }
+        Path path = Paths.get(filePath);
+        if (!Files.exists(path)) return "Error: File does not exist.";
+        if (Files.isDirectory(path)) return "Error: Path is a directory, not a file.";
+
+        try {
+            // Automatic Backup
+            Path backupPath = Paths.get(filePath + ".bak");
+            Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
+
+            String fileContent = Files.readString(path, StandardCharsets.UTF_8);
+
+            Pattern pattern;
+            try {
+                // MULTILINE allows ^ and $ to match start/end of lines, DOTALL allows . to match newlines
+                pattern = Pattern.compile(regex, Pattern.MULTILINE | Pattern.DOTALL);
+            } catch (PatternSyntaxException e) {
+                return "Error: Invalid regex pattern provided.";
+            }
+
+            Matcher matcher = pattern.matcher(fileContent);
+            if (!matcher.find()) {
+                return "Error: Regex pattern did not match any content in the file. Patch aborted.";
+            }
+
+            String updatedContent = matcher.replaceAll(Matcher.quoteReplacement(replacement != null ? replacement : ""));
+
+            Files.writeString(path, updatedContent, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
+            return "Successfully applied regex replacement. Original backed up to .bak";
+
+        } catch (Exception e) {
+            return "Error applying regex patch: " + e.getMessage();
         }
     }
 }

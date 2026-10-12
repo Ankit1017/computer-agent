@@ -78,26 +78,26 @@ public class TerminalToolsFacade {
         return fileService.readFileLines(filePath, startLine, endLine);
     }
 
-    @Tool("Replace specific lines in an existing file with new content. Use this to patch code or text without rewriting the whole file.")
+    @Tool("Replace specific lines in a file. An automatic .bak backup is created before patching.")
     public String replaceLinesInFile(
-            @P("path to file") String path,
-            @P("1-based start line number to replace") Integer startLine,
-            @P("1-based end line number to replace") Integer endLine,
-            @P("new content to insert") String newContent) {
-        if (path == null || path.isBlank()) {
-            return "Error: File path cannot be empty.";
+            @P("The path to the file") String filePath,
+            @P("The starting line number (1-indexed)") int startLine,
+            @P("The ending line number (inclusive)") int endLine,
+            @P("The new content to insert") String content) {
+        if (!security.requestPermission("replace lines in", filePath + " (" + startLine + "-" + endLine + ")")) {
+            return "User denied line replacement.";
         }
-        if (startLine == null || endLine == null) {
-            return "Error: startLine and endLine must not be null.";
-        }
-        if (startLine < 1 || endLine < startLine) {
-            return "Error: Invalid line range: startLine=" + startLine + ", endLine=" + endLine;
-        }
+        return fileService.replaceLines(filePath, startLine, endLine, content);
+    }
 
-        String details = "lines " + startLine + " to " + endLine + " in: " + path;
-        if (!security.requestPermission("patch", details)) {
-            return "User denied file patch.";
+    @Tool("Search for a Regex pattern in a file and replace it. Highly recommended over line-replacement to avoid line-shifting errors. An automatic .bak backup is created.")
+    public String regexReplaceInFile(
+            @P("The path to the file") String filePath,
+            @P("The regex pattern to search for (supports MULTILINE and DOTALL)") String regex,
+            @P("The new content to replace the matched regex with") String replacement) {
+        if (!security.requestPermission("regex patch", filePath)) {
+            return "User denied regex patch.";
         }
-        return fileService.replaceLines(path, startLine, endLine, newContent);
+        return fileService.regexReplaceInFile(filePath, regex, replacement);
     }
 }

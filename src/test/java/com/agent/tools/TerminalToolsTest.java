@@ -298,10 +298,15 @@ class TerminalToolsTest {
         TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.replaceLinesInFile(configFile.toString(), 2, 2, "port: 9090");
-        assertThat(result).contains("Successfully patched lines 2 to 2");
+        assertThat(result).contains("Successfully replaced lines 2 to 2");
+        assertThat(result).contains("Original backed up to .bak");
 
         List<String> updatedLines = Files.readAllLines(configFile);
         assertThat(updatedLines).containsExactly("server: localhost", "port: 9090", "debug: false");
+
+        Path backupFile = tempDir.resolve("config.yml.bak");
+        assertThat(Files.exists(backupFile)).isTrue();
+        assertThat(Files.readAllLines(backupFile)).containsExactly("server: localhost", "port: 8080", "debug: false");
     }
 
     @Test
@@ -314,7 +319,7 @@ class TerminalToolsTest {
         TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.replaceLinesInFile(configFile.toString(), 2, 2, "port: 9090");
-        assertThat(result).isEqualTo("User denied file patch.");
+        assertThat(result).isEqualTo("User denied line replacement.");
 
         List<String> unchangedLines = Files.readAllLines(configFile);
         assertThat(unchangedLines).containsExactly("server: localhost", "port: 8080", "debug: false");
@@ -330,9 +335,58 @@ class TerminalToolsTest {
         TerminalToolsFacade tools = createTools(scanner);
 
         String result = tools.replaceLinesInFile(configFile.toString(), 2, 3, "port: 9090\nssl: true\ndebug: true");
-        assertThat(result).contains("Successfully patched lines 2 to 3");
+        assertThat(result).contains("Successfully replaced lines 2 to 3");
 
         List<String> updatedLines = Files.readAllLines(configFile);
         assertThat(updatedLines).containsExactly("server: localhost", "port: 9090", "ssl: true", "debug: true");
+    }
+
+    @Test
+    @DisplayName("Should apply regex replacement across file when user approves with 'Y'")
+    void shouldApplyRegexReplacementWhenApproved(@TempDir Path tempDir) throws IOException {
+        Path targetFile = tempDir.resolve("app.properties");
+        Files.writeString(targetFile, "app.name=OldApp\napp.port=8080\napp.mode=dev\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.regexReplaceInFile(targetFile.toString(), "app\\.name=.*", "app.name=NewApp");
+        assertThat(result).contains("Successfully applied regex replacement. Original backed up to .bak");
+
+        String updatedContent = Files.readString(targetFile);
+        assertThat(updatedContent).contains("app.name=NewApp");
+        assertThat(updatedContent).doesNotContain("app.name=OldApp");
+
+        Path backupFile = tempDir.resolve("app.properties.bak");
+        assertThat(Files.exists(backupFile)).isTrue();
+        assertThat(Files.readString(backupFile)).contains("app.name=OldApp");
+    }
+
+    @Test
+    @DisplayName("Should deny regex replacement when user enters 'N'")
+    void shouldDenyRegexReplacementWhenRejected(@TempDir Path tempDir) throws IOException {
+        Path targetFile = tempDir.resolve("app.properties");
+        Files.writeString(targetFile, "app.name=OldApp\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("N\n".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.regexReplaceInFile(targetFile.toString(), "app\\.name=.*", "app.name=NewApp");
+        assertThat(result).isEqualTo("User denied regex patch.");
+        assertThat(Files.readString(targetFile)).isEqualTo("app.name=OldApp\n");
+    }
+
+    @Test
+    @DisplayName("Should abort regex replacement when pattern does not match")
+    void shouldAbortWhenRegexPatternNotFound(@TempDir Path tempDir) throws IOException {
+        Path targetFile = tempDir.resolve("app.properties");
+        Files.writeString(targetFile, "app.name=OldApp\n");
+
+        Scanner scanner = new Scanner(new ByteArrayInputStream("Y\n".getBytes()));
+        TerminalToolsFacade tools = createTools(scanner);
+
+        String result = tools.regexReplaceInFile(targetFile.toString(), "missing\\.key=.*", "val");
+        assertThat(result).contains("Regex pattern did not match any content in the file. Patch aborted.");
+        assertThat(Files.readString(targetFile)).isEqualTo("app.name=OldApp\n");
     }
 }

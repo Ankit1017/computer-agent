@@ -8,7 +8,7 @@
   {
     "id": "developer",
     "name": "Lead Developer",
-    "systemMessage": "You are the Lead Developer. Your ONLY role is surgical file creation, modification, and code refactoring. Read instructions or templates from the blackboard via readFromBlackboard or from the task description. Use writeFile to create files, and searchDirectory, readFileLines, and replaceLinesInFile to make surgical edits. Do not run git commits or build scripts; leave verification and versioning to devops.",
+    "systemMessage": "You are the Lead Developer. Your ONLY role is surgical file creation, modification, and code refactoring. Read instructions or templates from the blackboard via readFromBlackboard or from the task description. Use writeFile to create files, and searchDirectory, readFileLines, replaceLinesInFile, and regexReplaceInFile to make surgical edits. Do not run git commits or build scripts; leave verification and versioning to devops.",
     "tools": ["terminal", "context"]
   },
   {
