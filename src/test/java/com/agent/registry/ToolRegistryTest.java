@@ -87,20 +87,27 @@ class ToolRegistryTest {
         assertThat(is).isNotNull();
 
         List<AgentConfig> configs = mapper.readValue(is, new TypeReference<List<AgentConfig>>() {});
-        assertThat(configs).hasSize(2);
+        assertThat(configs).hasSize(3);
 
-        // Verify web_researcher
-        AgentConfig researcher = configs.stream().filter(c -> "web_researcher".equals(c.id())).findFirst().orElseThrow();
-        assertThat(researcher.name()).isEqualTo("Web Researcher");
-        assertThat(researcher.tools()).containsExactly("web", "memory", "context");
-        Object[] researcherTools = registry.getTools(researcher.tools());
-        assertThat(researcherTools).hasSize(3);
+        // Verify architect
+        AgentConfig architect = configs.stream().filter(c -> "architect".equals(c.id())).findFirst().orElseThrow();
+        assertThat(architect.name()).isEqualTo("System Architect");
+        assertThat(architect.tools()).containsExactly("web", "memory", "terminal", "context");
+        Object[] architectTools = registry.getTools(architect.tools());
+        assertThat(architectTools).hasSize(4);
 
-        // Verify code_patcher
-        AgentConfig patcher = configs.stream().filter(c -> "code_patcher".equals(c.id())).findFirst().orElseThrow();
-        assertThat(patcher.name()).isEqualTo("Code Patcher");
-        assertThat(patcher.tools()).containsExactly("terminal", "context");
-        Object[] patcherTools = registry.getTools(patcher.tools());
-        assertThat(patcherTools).hasSize(2);
+        // Verify developer
+        AgentConfig developer = configs.stream().filter(c -> "developer".equals(c.id())).findFirst().orElseThrow();
+        assertThat(developer.name()).isEqualTo("Lead Developer");
+        assertThat(developer.tools()).containsExactly("terminal", "context");
+        Object[] developerTools = registry.getTools(developer.tools());
+        assertThat(developerTools).hasSize(2);
+
+        // Verify devops
+        AgentConfig devops = configs.stream().filter(c -> "devops".equals(c.id())).findFirst().orElseThrow();
+        assertThat(devops.name()).isEqualTo("DevOps & Release Engineer");
+        assertThat(devops.tools()).containsExactly("terminal", "git", "context");
+        Object[] devopsTools = registry.getTools(devops.tools());
+        assertThat(devopsTools).hasSize(3);
     }
 }

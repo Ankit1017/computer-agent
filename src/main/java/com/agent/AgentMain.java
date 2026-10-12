@@ -76,14 +76,23 @@ public class AgentMain {
             ChatLanguageModel model = OllamaModelFactory.createModel();
             SubAgentFactory factory = new SubAgentFactory(model, toolRegistry);
 
-            // 6. Read agents.json from classpath
+            // 6. Read agents.json from working directory or fallback to classpath
             ObjectMapper mapper = new ObjectMapper();
             List<AgentConfig> configs;
-            try (InputStream is = AgentMain.class.getClassLoader().getResourceAsStream("agents.json")) {
-                if (is == null) {
-                    throw new IllegalStateException("agents.json not found in classpath resources");
+            InputStream configStream;
+            Path localConfig = Path.of("agents.json");
+            if (Files.exists(localConfig)) {
+                System.out.println("[CONFIG] Loading agents manifest from working directory: " + localConfig.toAbsolutePath());
+                configStream = Files.newInputStream(localConfig);
+            } else {
+                System.out.println("[CONFIG] Loading default agents manifest from classpath resources.");
+                configStream = AgentMain.class.getClassLoader().getResourceAsStream("agents.json");
+                if (configStream == null) {
+                    throw new IllegalStateException("agents.json not found on disk or classpath!");
                 }
-                configs = mapper.readValue(is, new TypeReference<List<AgentConfig>>() {});
+            }
+            try (configStream) {
+                configs = mapper.readValue(configStream, new TypeReference<List<AgentConfig>>() {});
             }
 
             // 7. Initialize the Swarm map of specialized sub-agents
