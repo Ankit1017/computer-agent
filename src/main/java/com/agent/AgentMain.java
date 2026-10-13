@@ -16,6 +16,7 @@ import com.agent.tools.vision.VisionToolsFacade;
 import com.agent.tools.web.WebToolsFacade;
 import com.agent.tools.web.services.WebDistillationService;
 import com.agent.tools.web.services.WebNavigationService;
+import com.agent.tools.web.services.WebSearchService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.segment.TextSegment;
@@ -79,7 +80,8 @@ public class AgentMain {
             GitTools gitTools = new GitTools(scanner);
             WebNavigationService webNavService = new WebNavigationService();
             WebDistillationService webDistService = new WebDistillationService();
-            WebToolsFacade webTools = new WebToolsFacade(security, webNavService, webDistService);
+            WebSearchService webSearchService = new WebSearchService();
+            WebToolsFacade webTools = new WebToolsFacade(security, webNavService, webDistService, webSearchService);
             MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);
             ContextTools contextTools = new ContextTools();
             VisionToolsFacade visionTools = new VisionToolsFacade(security);

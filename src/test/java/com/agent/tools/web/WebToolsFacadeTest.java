@@ -3,6 +3,7 @@ package com.agent.tools.web;
 import com.agent.tools.terminal.security.SecurityInterceptor;
 import com.agent.tools.web.services.WebDistillationService;
 import com.agent.tools.web.services.WebNavigationService;
+import com.agent.tools.web.services.WebSearchService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ class WebToolsFacadeTest {
     private SecurityInterceptor mockSecurity;
     private WebNavigationService mockNavService;
     private WebDistillationService mockDistService;
+    private WebSearchService mockSearchService;
     private WebToolsFacade facade;
 
     @BeforeEach
@@ -22,7 +24,8 @@ class WebToolsFacadeTest {
         mockSecurity = mock(SecurityInterceptor.class);
         mockNavService = mock(WebNavigationService.class);
         mockDistService = mock(WebDistillationService.class);
-        facade = new WebToolsFacade(mockSecurity, mockNavService, mockDistService);
+        mockSearchService = mock(WebSearchService.class);
+        facade = new WebToolsFacade(mockSecurity, mockNavService, mockDistService, mockSearchService);
     }
 
     @Test
@@ -68,5 +71,18 @@ class WebToolsFacadeTest {
         assertThat(result).isEqualTo("Error reading webpage: Parsing failure");
         verify(mockNavService, times(1)).fetchRawHtml(testUrl);
         verify(mockDistService, times(1)).distillToMarkdown(rawHtml);
+    }
+
+    @Test
+    @DisplayName("Should delegate searchWeb to WebSearchService")
+    void shouldDelegateSearchWeb() {
+        String query = "Java 21 Virtual Threads";
+        String mockResults = "Search Results for 'Java 21 Virtual Threads':\n\n### 1. Oracle Docs";
+        when(mockSearchService.search(query)).thenReturn(mockResults);
+
+        String result = facade.searchWeb(query);
+
+        assertThat(result).isEqualTo(mockResults);
+        verify(mockSearchService, times(1)).search(query);
     }
 }
