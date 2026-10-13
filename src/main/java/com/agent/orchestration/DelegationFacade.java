@@ -19,4 +19,13 @@ public class DelegationFacade {
             @P("The detailed task description") String task) {
         return orchestrationService.routeTask(agentId, task);
     }
+
+    @Tool("Delegate two completely independent tasks to two different sub-agents simultaneously to save time. Use this when the tasks do not depend on each other's outputs.")
+    public String delegateParallel(
+            @P("The ID of the first sub-agent") String agentId1,
+            @P("The detailed task description for the first sub-agent") String task1,
+            @P("The ID of the second sub-agent") String agentId2,
+            @P("The detailed task description for the second sub-agent") String task2) {
+        return orchestrationService.routeParallelTasks(agentId1, task1, agentId2, task2);
+    }
 }

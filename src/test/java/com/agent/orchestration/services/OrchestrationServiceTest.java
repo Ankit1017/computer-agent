@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,38 +71,66 @@ class OrchestrationServiceTest {
     }
 
     @Test
-    @DisplayName("Should validate empty or null inputs")
-    void shouldValidateInputs() {
-        assertThat(orchestrationService.routeTask(null, "task")).isEqualTo("Error: Agent ID cannot be empty.");
-        assertThat(orchestrationService.routeTask("   ", "task")).isEqualTo("Error: Agent ID cannot be empty.");
-        assertThat(orchestrationService.routeTask("agent", null)).isEqualTo("Error: Task description cannot be empty.");
-        assertThat(orchestrationService.routeTask("agent", "   ")).isEqualTo("Error: Task description cannot be empty.");
+    @DisplayName("Should retry on transient failure and succeed on second attempt")
+    void shouldRetryOnTransientFailureAndSucceed() {
+        AtomicInteger attempts = new AtomicInteger(0);
+        WorkerAgent mockAgent = task -> {
+            if (attempts.incrementAndGet() == 1) {
+                throw new RuntimeException("Transient network timeout");
+            }
+            return "Recovered on attempt 2";
+        };
+        when(agentFactory.getAgent("developer")).thenReturn(mockAgent);
+
+        String result = orchestrationService.routeTask("developer", "Refactor module");
+
+        assertThat(result).isEqualTo("Recovered on attempt 2");
+        assertThat(attempts.get()).isEqualTo(2);
     }
 
     @Test
-    @DisplayName("Should return error when agent is not found")
-    void shouldReturnErrorWhenAgentNotFound() {
+    @DisplayName("Should report failure after max attempts exhausted")
+    void shouldReportFailureAfterMaxAttemptsExhausted() {
+        AtomicInteger attempts = new AtomicInteger(0);
+        WorkerAgent mockAgent = task -> {
+            attempts.incrementAndGet();
+            throw new RuntimeException("Permanent backend error");
+        };
+        when(agentFactory.getAgent("buggy")).thenReturn(mockAgent);
+
+        String result = orchestrationService.routeTask("buggy", "execute");
+
+        assertThat(result).contains("AGENT EXECUTION FAILED after 2 attempts. Error: Permanent backend error");
+        assertThat(attempts.get()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Should return error message when agent is unknown")
+    void shouldHandleUnknownAgent() {
         when(agentFactory.getAgent("unknown")).thenReturn(null);
 
         String result = orchestrationService.routeTask("unknown", "do work");
-        assertThat(result).isEqualTo("Error: Unknown agent ID 'unknown'.");
+        assertThat(result).contains("AGENT EXECUTION FAILED after 2 attempts. Error: Unknown agent ID 'unknown'");
     }
 
     @Test
-    @DisplayName("Should catch and format exceptions from agent execution")
-    void shouldHandleAgentException() {
-        when(agentFactory.getAgent("buggy")).thenReturn(task -> {
-            throw new RuntimeException("Model connection timeout");
-        });
+    @DisplayName("Should execute parallel tasks concurrently and synthesize responses")
+    void shouldExecuteParallelTasksConcurrently() {
+        WorkerAgent devopsAgent = task -> "Git status: clean";
+        WorkerAgent researcherAgent = task -> "Virtual Threads allow massive concurrency.";
 
-        String result = orchestrationService.routeTask("buggy", "execute");
-        assertThat(result).isEqualTo("Error routing task to agent 'buggy': Model connection timeout");
-    }
+        when(agentFactory.getAgent("devops")).thenReturn(devopsAgent);
+        when(agentFactory.getAgent("researcher")).thenReturn(researcherAgent);
 
-    @Test
-    @DisplayName("Should return placeholder for routeParallelTasks")
-    void shouldReturnPlaceholderForParallelTasks() {
-        String result = orchestrationService.routeParallelTasks("agent1", "task1", "agent2", "task2");
-        assertThat(result).contains("Placeholder: Parallel execution not yet implemented.");
+        String result = orchestrationService.routeParallelTasks(
+                "devops", "Check git status",
+                "researcher", "Research Virtual Threads"
+        );
+
+        assertThat(result)
+                .contains("=== Response from devops ===")
+                .contains("Git status: clean")
+                .contains("=== Response from researcher ===")
+                .contains("Virtual Threads allow massive concurrency.");
     }
 }

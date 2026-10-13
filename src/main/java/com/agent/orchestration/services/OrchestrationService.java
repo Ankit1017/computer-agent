@@ -1,62 +1,80 @@
 package com.agent.orchestration.services;
 
-import com.agent.WorkerAgent;
 import com.agent.factory.SubAgentFactory;
+import com.agent.WorkerAgent;
 import com.agent.tools.context.services.BlackboardService;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class OrchestrationService {
     private final SubAgentFactory agentFactory;
     private final BlackboardService blackboardService;
+    
+    // Java 21 Virtual Threads for lightweight, concurrent agent execution
+    private final ExecutorService vThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public OrchestrationService(SubAgentFactory agentFactory, BlackboardService blackboardService) {
         this.agentFactory = Objects.requireNonNull(agentFactory, "agentFactory must not be null");
         this.blackboardService = Objects.requireNonNull(blackboardService, "blackboardService must not be null");
     }
 
-    /**
-     * Generic flow: Routes a task to a single sub-agent, injecting core memory.
-     */
     public String routeTask(String agentId, String task) {
         System.out.println("[ORCHESTRATOR] Routing task to '" + agentId + "': " + task);
-        if (agentId == null || agentId.isBlank()) {
-            return "Error: Agent ID cannot be empty.";
-        }
-        if (task == null || task.isBlank()) {
-            return "Error: Task description cannot be empty.";
-        }
+        return executeWithRetry(agentId, task, 2); // 2 max attempts for standard routes
+    }
+
+    public String routeParallelTasks(String agentId1, String task1, String agentId2, String task2) {
+        System.out.println("[ORCHESTRATOR] Routing PARALLEL tasks to '" + agentId1 + "' and '" + agentId2 + "'");
+
+        CompletableFuture<String> future1 = CompletableFuture.supplyAsync(() -> 
+            "=== Response from " + agentId1 + " ===\n" + executeWithRetry(agentId1, task1, 1), vThreadExecutor);
+            
+        CompletableFuture<String> future2 = CompletableFuture.supplyAsync(() -> 
+            "=== Response from " + agentId2 + " ===\n" + executeWithRetry(agentId2, task2, 1), vThreadExecutor);
+
         try {
-            WorkerAgent agent = agentFactory.getAgent(agentId);
-            if (agent == null) {
-                return "Error: Unknown agent ID '" + agentId + "'.";
-            }
-
-            // Auto-inject core memory (preserving Milestone 9.0.3.2 logic)
-            String coreContext = blackboardService.dumpNamespace("core");
-            String finalPrompt = task;
-
-            if (!coreContext.isEmpty()) {
-                finalPrompt = "[[ SYSTEM CORE MEMORY (DO NOT IGNORE) ]]\n" + 
-                              coreContext + 
-                              "\n====================================\n\n" + 
-                              "YOUR TASK:\n" + task;
-            }
-
-            // TODO: In future milestones, wrap this in timeout/retry resilience logic.
-            String response = agent.execute(finalPrompt);
-            System.out.println("[main] INFO OrchestrationService - Agent '" + agentId + "' completed task. Response length: " + (response != null ? response.length() : 0));
-            return response != null ? response : "";
+            // Wait for both virtual threads to complete
+            CompletableFuture.allOf(future1, future2).join();
+            return future1.get() + "\n\n" + future2.get();
         } catch (Exception e) {
-            return "Error routing task to agent '" + agentId + "': " + e.getMessage();
+            return "Parallel execution encountered a critical error: " + e.getMessage();
         }
     }
 
-    /**
-     * Scaffold for future parallel execution.
-     */
-    public String routeParallelTasks(String agentId1, String task1, String agentId2, String task2) {
-        // TODO: Implement Virtual Thread parallel execution in upcoming milestones.
-        return "Placeholder: Parallel execution not yet implemented.";
+    private String executeWithRetry(String agentId, String task, int maxAttempts) {
+        int attempt = 1;
+        while (attempt <= maxAttempts) {
+            try {
+                WorkerAgent agent = agentFactory.getAgent(agentId);
+                if (agent == null) {
+                    throw new IllegalArgumentException("Unknown agent ID '" + agentId + "'");
+                }
+                
+                String coreContext = blackboardService.dumpNamespace("core");
+                String finalPrompt = task;
+                
+                if (coreContext != null && !coreContext.isEmpty()) {
+                    finalPrompt = "[[ SYSTEM CORE MEMORY (DO NOT IGNORE) ]]\n" + 
+                                  coreContext + 
+                                  "\n====================================\n\n" + 
+                                  "YOUR TASK:\n" + task;
+                }
+
+                String response = agent.execute(finalPrompt);
+                int responseLength = (response != null) ? response.length() : 0;
+                System.out.println("[main] INFO OrchestrationService - Agent '" + agentId + "' completed task. Response length: " + responseLength);
+                return response != null ? response : "";
+            } catch (Exception e) {
+                System.err.println("[ORCHESTRATOR] Agent '" + agentId + "' encountered error on attempt " + attempt + ": " + e.getMessage());
+                if (attempt == maxAttempts) {
+                    return "AGENT EXECUTION FAILED after " + maxAttempts + " attempts. Error: " + e.getMessage();
+                }
+                attempt++;
+            }
+        }
+        return "AGENT EXECUTION FAILED.";
     }
 }

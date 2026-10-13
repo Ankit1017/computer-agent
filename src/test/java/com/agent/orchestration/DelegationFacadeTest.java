@@ -23,4 +23,18 @@ class DelegationFacadeTest {
         assertThat(result).isEqualTo("Architecture Plan");
         verify(service).routeTask("architect", "design system");
     }
+
+    @Test
+    @DisplayName("Should delegate delegateParallel to OrchestrationService routeParallelTasks")
+    void shouldDelegateParallelToOrchestrationService() {
+        OrchestrationService service = mock(OrchestrationService.class);
+        when(service.routeParallelTasks("devops", "check status", "researcher", "find docs"))
+                .thenReturn("Combined Results");
+
+        DelegationFacade facade = new DelegationFacade(service);
+        String result = facade.delegateParallel("devops", "check status", "researcher", "find docs");
+
+        assertThat(result).isEqualTo("Combined Results");
+        verify(service).routeParallelTasks("devops", "check status", "researcher", "find docs");
+    }
 }

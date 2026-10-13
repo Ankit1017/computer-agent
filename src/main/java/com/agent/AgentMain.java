@@ -144,8 +144,8 @@ public class AgentMain {
             // 9. Build the Manager's dynamic prompt
             StringBuilder managerPrompt = new StringBuilder(
                     "You are the Swarm Orchestrator. You do not have direct access to the OS, web, filesystem, or memory.\n" +
-                    "CRITICAL: You ONLY have the tool: 'delegateTask'. You DO NOT have tools like writeTemporaryData, readFromNamespacedBlackboard, or executeCommand. You MUST ALWAYS call delegateTask to have sub-agents perform actions.\n" +
-                    "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask.\n" +
+                    "CRITICAL: You ONLY have the tools: 'delegateTask' and 'delegateParallel'. You DO NOT have tools like writeTemporaryData, readFromNamespacedBlackboard, or executeCommand. You MUST ALWAYS call delegateTask or delegateParallel to have sub-agents perform actions.\n" +
+                    "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask or delegateParallel.\n" +
                     "Whenever the user asks an agent to do something (e.g. 'Have the <agent>...', 'Tell <agent> to...', 'Ask <agent> to...', 'First, have <agent>...'), you MUST delegate the instruction to that sub-agent immediately using delegateTask.\n" +
                     "When the user gives a multi-step instruction (e.g. 'First, have <agentA> do X. Second, have <agentB> do Y.'), you MUST execute them sequentially: call delegateTask for <agentA> first, then call delegateTask for <agentB>, and then synthesize and report the result to the user.\n" +
                     "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly (e.g. 'What is the project code name?') WITHOUT instructing them to read from the blackboard!\n" +
@@ -157,7 +157,9 @@ public class AgentMain {
             }
             managerPrompt.append("\nROLE AWARENESS:\n")
                     .append(" - 'researcher' (Web Research Specialist): Dedicated to searching the web, navigating pages, reading documentation, and synthesizing external information.\n")
-                    .append("\nWhen tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n\n")
+                    .append("\nWhen tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n")
+                    .append("PARALLEL EXECUTION:\n")
+                    .append("3. Use 'delegateParallel' to execute independent tasks concurrently to save time. For example, if you need the researcher to look up a topic and the devops engineer to check git status, delegate them in parallel.\n\n")
                     .append("HOST OS & COMMAND EXECUTION:\n")
                     .append("Host OS is: ").append(System.getProperty("os.name")).append(".\n")
                     .append("When requesting terminal commands from devops, ensure syntax matches the host OS (e.g. on Windows use 'ping -n 4' instead of '-c 4', and for sleep/delay use 'powershell -Command Start-Sleep -Seconds 65' instead of 'sleep 65'). Always delegate distinct sequential steps as separate tasks (run ping first, then run sleep/timeout).\n\n")
@@ -170,7 +172,8 @@ public class AgentMain {
                     .append("6. For long-term semantic memory workflows: to store information or credentials, delegate 'storeFact' to the developer. To search or retrieve information or credentials from memory, delegate 'searchMemory' to developer, and report the retrieved answer back to the user.\n")
                     .append("7. For Git version control workflows: to review and commit changes, delegate to 'devops' with the instruction: 'Inspect getGitStatus and getGitDiff, formulate a conventional commit message, and execute commitChanges.' Always ensure devops calls the commitChanges tool.\n")
                     .append("8. For temporary scratchpad and namespaced blackboard workflows: ALWAYS call delegateTask with agentId 'researcher' or 'architect'. Do NOT attempt to call writeTemporaryData or writeToNamespacedBlackboard directly. Instruct the agent to call writeToNamespacedBlackboard(namespace, key, data) or writeTemporaryData(namespace, key, data, ttlSeconds).\n")
-                    .append("9. When asked: 'First, have the architect use writeToNamespacedBlackboard to write the key 'ProjectCodeName' with the value 'Operation Phoenix' into the 'core' namespace. Second, ask the developer what the project code name is WITHOUT telling the developer to read from the blackboard', execute sequentially: 1) delegateTask('architect', 'writeToNamespacedBlackboard key=ProjectCodeName value=Operation Phoenix namespace=core'), 2) delegateTask('developer', 'What is the project code name?'). Never instruct the developer to read from the blackboard.\n");
+                    .append("9. When asked: 'First, have the architect use writeToNamespacedBlackboard to write the key 'ProjectCodeName' with the value 'Operation Phoenix' into the 'core' namespace. Second, ask the developer what the project code name is WITHOUT telling the developer to read from the blackboard', execute sequentially: 1) delegateTask('architect', 'writeToNamespacedBlackboard key=ProjectCodeName value=Operation Phoenix namespace=core'), 2) delegateTask('developer', 'What is the project code name?'). Never instruct the developer to read from the blackboard.\n")
+                    .append("10. Use 'delegateParallel' to execute independent tasks concurrently to save time. For example, if you need the researcher to look up a topic and the devops engineer to check git status, delegate them in parallel.\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)
