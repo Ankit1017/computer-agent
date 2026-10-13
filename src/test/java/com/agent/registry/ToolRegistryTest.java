@@ -1,7 +1,8 @@
 package com.agent.registry;
 
 import com.agent.config.AgentConfig;
-import com.agent.tools.ContextTools;
+import com.agent.tools.context.ContextToolsFacade;
+import com.agent.tools.context.services.BlackboardService;
 import com.agent.tools.git.GitToolsFacade;
 import com.agent.tools.git.services.GitExecutionService;
 import com.agent.tools.memory.MemoryToolsFacade;
@@ -37,7 +38,7 @@ class ToolRegistryTest {
     private GitToolsFacade gitTools;
     private WebToolsFacade webTools;
     private MemoryToolsFacade memoryTools;
-    private ContextTools contextTools;
+    private ContextToolsFacade contextTools;
     private VisionToolsFacade visionTools;
 
     @BeforeEach
@@ -52,7 +53,7 @@ class ToolRegistryTest {
         gitTools = new GitToolsFacade(security, new GitExecutionService());
         webTools = mock(WebToolsFacade.class);
         memoryTools = new MemoryToolsFacade(new LongTermMemoryService());
-        contextTools = new ContextTools();
+        contextTools = new ContextToolsFacade(new BlackboardService());
         visionTools = mock(VisionToolsFacade.class);
 
         registry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools, visionTools);

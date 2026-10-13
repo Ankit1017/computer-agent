@@ -4,8 +4,9 @@ import com.agent.config.AgentConfig;
 import com.agent.factory.OllamaModelFactory;
 import com.agent.factory.SubAgentFactory;
 import com.agent.registry.ToolRegistry;
-import com.agent.tools.ContextTools;
 import com.agent.tools.DelegationTool;
+import com.agent.tools.context.ContextToolsFacade;
+import com.agent.tools.context.services.BlackboardService;
 import com.agent.tools.git.GitToolsFacade;
 import com.agent.tools.git.services.GitExecutionService;
 import com.agent.tools.memory.MemoryToolsFacade;
@@ -95,7 +96,8 @@ public class AgentMain {
             WebToolsFacade webTools = new WebToolsFacade(security, navService, webDistService, webSearchService, webAnalysisService);
             LongTermMemoryService longTermMemoryService = new LongTermMemoryService();
             MemoryToolsFacade memoryTools = new MemoryToolsFacade(longTermMemoryService);
-            ContextTools contextTools = new ContextTools();
+            BlackboardService blackboardService = new BlackboardService();
+            ContextToolsFacade contextTools = new ContextToolsFacade(blackboardService);
             VisionToolsFacade visionTools = new VisionToolsFacade(security);
 
             // 4. Instantiate ToolRegistry and register tools

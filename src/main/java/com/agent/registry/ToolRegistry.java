@@ -1,6 +1,6 @@
 package com.agent.registry;
 
-import com.agent.tools.ContextTools;
+import com.agent.tools.context.ContextToolsFacade;
 import com.agent.tools.git.GitToolsFacade;
 import com.agent.tools.memory.MemoryToolsFacade;
 import com.agent.tools.terminal.TerminalToolsFacade;
@@ -35,22 +35,22 @@ public class ToolRegistry {
     /**
      * Initializes the tool registry with standard agent tools and shared context blackboard.
      */
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitToolsFacade gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextTools contextTools) {
-        this(terminalTools, (Object) gitTools, (Object) webTools, (Object) memoryTools, contextTools, null);
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitToolsFacade gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextToolsFacade contextTools) {
+        this(terminalTools, (Object) gitTools, (Object) webTools, (Object) memoryTools, (Object) contextTools, null);
     }
 
-    public ToolRegistry(TerminalToolsFacade terminalTools, Object gitTools, Object webTools, Object memoryTools, ContextTools contextTools) {
+    public ToolRegistry(TerminalToolsFacade terminalTools, Object gitTools, Object webTools, Object memoryTools, Object contextTools) {
         this(terminalTools, gitTools, webTools, memoryTools, contextTools, null);
     }
 
     /**
      * Initializes the tool registry with standard agent tools, shared context blackboard, and vision tools.
      */
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitToolsFacade gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
-        this(terminalTools, (Object) gitTools, (Object) webTools, (Object) memoryTools, contextTools, visionTools);
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitToolsFacade gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextToolsFacade contextTools, VisionToolsFacade visionTools) {
+        this(terminalTools, (Object) gitTools, (Object) webTools, (Object) memoryTools, (Object) contextTools, visionTools);
     }
 
-    public ToolRegistry(TerminalToolsFacade terminalTools, Object gitTools, Object webTools, Object memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
+    public ToolRegistry(TerminalToolsFacade terminalTools, Object gitTools, Object webTools, Object memoryTools, Object contextTools, VisionToolsFacade visionTools) {
         if (terminalTools != null) {
             registerTool("terminal", terminalTools);
         }
