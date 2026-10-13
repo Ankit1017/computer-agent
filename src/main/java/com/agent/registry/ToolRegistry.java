@@ -2,10 +2,10 @@ package com.agent.registry;
 
 import com.agent.tools.ContextTools;
 import com.agent.tools.GitTools;
-import com.agent.tools.MemoryTools;
-import com.agent.tools.WebTools;
+import com.agent.tools.memory.MemoryToolsFacade;
 import com.agent.tools.terminal.TerminalToolsFacade;
 import com.agent.tools.vision.VisionToolsFacade;
+import com.agent.tools.web.WebToolsFacade;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,37 +24,33 @@ public class ToolRegistry {
     /**
      * Initializes the tool registry with standard agent tools.
      */
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools) {
-        this(terminalTools, gitTools, (Object) webTools, memoryTools, null, null);
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools) {
+        this(terminalTools, gitTools, (Object) webTools, (Object) memoryTools, null, null);
     }
 
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, com.agent.tools.web.WebToolsFacade webTools, MemoryTools memoryTools) {
-        this(terminalTools, gitTools, (Object) webTools, memoryTools, null, null);
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, Object webTools, Object memoryTools) {
+        this(terminalTools, gitTools, webTools, memoryTools, null, null);
     }
 
     /**
      * Initializes the tool registry with standard agent tools and shared context blackboard.
      */
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools, ContextTools contextTools) {
-        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, null);
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextTools contextTools) {
+        this(terminalTools, gitTools, (Object) webTools, (Object) memoryTools, contextTools, null);
     }
 
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, com.agent.tools.web.WebToolsFacade webTools, MemoryTools memoryTools, ContextTools contextTools) {
-        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, null);
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, Object webTools, Object memoryTools, ContextTools contextTools) {
+        this(terminalTools, gitTools, webTools, memoryTools, contextTools, null);
     }
 
     /**
      * Initializes the tool registry with standard agent tools, shared context blackboard, and vision tools.
      */
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
-        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, visionTools);
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
+        this(terminalTools, gitTools, (Object) webTools, (Object) memoryTools, contextTools, visionTools);
     }
 
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, com.agent.tools.web.WebToolsFacade webTools, MemoryTools memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
-        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, visionTools);
-    }
-
-    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, Object webTools, MemoryTools memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, Object webTools, Object memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
         if (terminalTools != null) {
             registerTool("terminal", terminalTools);
         }

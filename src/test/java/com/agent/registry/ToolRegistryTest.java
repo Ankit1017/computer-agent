@@ -3,8 +3,9 @@ package com.agent.registry;
 import com.agent.config.AgentConfig;
 import com.agent.tools.ContextTools;
 import com.agent.tools.GitTools;
-import com.agent.tools.MemoryTools;
-import com.agent.tools.WebTools;
+import com.agent.tools.memory.MemoryToolsFacade;
+import com.agent.tools.memory.services.LongTermMemoryService;
+import com.agent.tools.web.WebToolsFacade;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.segment.TextSegment;
@@ -33,8 +34,8 @@ class ToolRegistryTest {
     private ToolRegistry registry;
     private TerminalToolsFacade terminalTools;
     private GitTools gitTools;
-    private WebTools webTools;
-    private MemoryTools memoryTools;
+    private WebToolsFacade webTools;
+    private MemoryToolsFacade memoryTools;
     private ContextTools contextTools;
     private VisionToolsFacade visionTools;
 
@@ -47,8 +48,8 @@ class ToolRegistryTest {
                 new FileSystemService()
         );
         gitTools = new GitTools(scanner);
-        webTools = new WebTools(scanner);
-        memoryTools = new MemoryTools(new AllMiniLmL6V2EmbeddingModel(), new InMemoryEmbeddingStore<TextSegment>());
+        webTools = mock(WebToolsFacade.class);
+        memoryTools = new MemoryToolsFacade(new LongTermMemoryService());
         contextTools = new ContextTools();
         visionTools = mock(VisionToolsFacade.class);
 

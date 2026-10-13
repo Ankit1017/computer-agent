@@ -4,8 +4,9 @@ import com.agent.WorkerAgent;
 import com.agent.config.AgentConfig;
 import com.agent.registry.ToolRegistry;
 import com.agent.tools.GitTools;
-import com.agent.tools.MemoryTools;
-import com.agent.tools.WebTools;
+import com.agent.tools.memory.MemoryToolsFacade;
+import com.agent.tools.memory.services.LongTermMemoryService;
+import com.agent.tools.web.WebToolsFacade;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.segment.TextSegment;
@@ -28,13 +29,14 @@ import java.util.Scanner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 class SubAgentFactoryTest {
 
     private ToolRegistry registry;
     private TerminalToolsFacade terminalTools;
-    private WebTools webTools;
-    private MemoryTools memoryTools;
+    private WebToolsFacade webTools;
+    private MemoryToolsFacade memoryTools;
     private GitTools gitTools;
 
     @BeforeEach
@@ -46,8 +48,8 @@ class SubAgentFactoryTest {
                 new FileSystemService()
         );
         gitTools = new GitTools(scanner);
-        webTools = new WebTools(scanner);
-        memoryTools = new MemoryTools(new AllMiniLmL6V2EmbeddingModel(), new InMemoryEmbeddingStore<TextSegment>());
+        webTools = mock(WebToolsFacade.class);
+        memoryTools = new MemoryToolsFacade(new LongTermMemoryService());
 
         registry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools);
     }

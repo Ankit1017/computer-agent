@@ -7,7 +7,8 @@ import com.agent.registry.ToolRegistry;
 import com.agent.tools.ContextTools;
 import com.agent.tools.DelegationTool;
 import com.agent.tools.GitTools;
-import com.agent.tools.MemoryTools;
+import com.agent.tools.memory.MemoryToolsFacade;
+import com.agent.tools.memory.services.LongTermMemoryService;
 import com.agent.tools.terminal.TerminalToolsFacade;
 import com.agent.tools.terminal.security.SecurityInterceptor;
 import com.agent.tools.terminal.services.CommandExecutorService;
@@ -90,7 +91,8 @@ public class AgentMain {
             WebSearchService webSearchService = new WebSearchService();
             WebAnalysisService webAnalysisService = new WebAnalysisService();
             WebToolsFacade webTools = new WebToolsFacade(security, navService, webDistService, webSearchService, webAnalysisService);
-            MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);
+            LongTermMemoryService longTermMemoryService = new LongTermMemoryService();
+            MemoryToolsFacade memoryTools = new MemoryToolsFacade(longTermMemoryService);
             ContextTools contextTools = new ContextTools();
             VisionToolsFacade visionTools = new VisionToolsFacade(security);
 
