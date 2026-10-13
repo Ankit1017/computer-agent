@@ -55,16 +55,20 @@ public class AgentMain {
             // 1. Shared Scanner for both chat input and HITL tool security confirmation
             Scanner scanner = new Scanner(System.in);
 
-            // 2. Initialize Web Navigation Service & Headless Browser Shutdown Hook
+            // 2. Initialize Web Navigation Service, Blackboard Service & Graceful Shutdown Hook
             WebNavigationService navService = new WebNavigationService();
+            BlackboardService blackboardService = new BlackboardService();
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.out.println("\n[SYSTEM] Graceful shutdown initiated. Releasing resources...");
                 try {
                     if (navService != null) {
                         navService.close();
                     }
+                    if (blackboardService != null) {
+                        blackboardService.shutdown();
+                    }
                 } catch (Exception e) {
-                    System.err.println("Error closing WebNavigationService: " + e.getMessage());
+                    System.err.println("Error during shutdown: " + e.getMessage());
                 }
                 System.out.println("[SYSTEM] Shutdown complete. Goodbye.");
             }));
@@ -96,7 +100,6 @@ public class AgentMain {
             WebToolsFacade webTools = new WebToolsFacade(security, navService, webDistService, webSearchService, webAnalysisService);
             LongTermMemoryService longTermMemoryService = new LongTermMemoryService();
             MemoryToolsFacade memoryTools = new MemoryToolsFacade(longTermMemoryService);
-            BlackboardService blackboardService = new BlackboardService();
             ContextToolsFacade contextTools = new ContextToolsFacade(blackboardService);
             VisionToolsFacade visionTools = new VisionToolsFacade(security);
 
@@ -138,7 +141,8 @@ public class AgentMain {
 
             // 9. Build the Manager's dynamic prompt
             StringBuilder managerPrompt = new StringBuilder(
-                    "You are the Swarm Orchestrator. You do not have direct access to the OS, web, or memory.\n" +
+                    "You are the Swarm Orchestrator. You do not have direct access to the OS, web, filesystem, or memory.\n" +
+                    "CRITICAL: You ONLY have two tools: 'delegateTask' and 'delegateParallel'. You DO NOT have tools like writeTemporaryData, readFromNamespacedBlackboard, or executeCommand. You MUST ALWAYS call delegateTask to have sub-agents perform actions.\n" +
                     "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask.\n" +
                     "Whenever the user asks an agent to do something (e.g. 'Have the <agent>...', 'Tell <agent> to...', 'Ask <agent> to...', 'First, have <agent>...'), you MUST delegate the instruction to that sub-agent immediately using delegateTask.\n" +
                     "When the user gives a multi-step instruction (e.g. 'First, have <agentA> do X. Second, have <agentB> do Y.'), you MUST execute them sequentially: call delegateTask for <agentA> first, then call delegateTask for <agentB>, and then synthesize and report the result to the user.\n" +
@@ -163,7 +167,8 @@ public class AgentMain {
                     .append("4. For web workflows, delegate strictly to the 'researcher': to search the web, delegate 'searchWeb'. To load a URL, delegate 'readWebPage'. To analyze a large web page for a specific query without overloading context, delegate 'analyzeWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating web interaction, forward the exact URL, selectors, input text, and steps to the researcher.\n")
                     .append("5. For research and file persistence workflows: instruct the researcher to write findings to the blackboard using writeToBlackboard with the specified key, and instruct the developer to read that key from the blackboard using readFromBlackboard and write it to disk using writeFile.\n")
                     .append("6. For long-term semantic memory workflows: to store information or credentials, delegate 'storeFact' to the developer. To search or retrieve information or credentials from memory, delegate 'searchMemory' to developer, and report the retrieved answer back to the user.\n")
-                    .append("7. For Git version control workflows: to review and commit changes, delegate to 'devops' with the instruction: 'Inspect getGitStatus and getGitDiff, formulate a conventional commit message, and execute commitChanges.' Always ensure devops calls the commitChanges tool.\n");
+                    .append("7. For Git version control workflows: to review and commit changes, delegate to 'devops' with the instruction: 'Inspect getGitStatus and getGitDiff, formulate a conventional commit message, and execute commitChanges.' Always ensure devops calls the commitChanges tool.\n")
+                    .append("8. For temporary scratchpad and namespaced blackboard workflows: ALWAYS call delegateTask with agentId 'researcher'. Do NOT attempt to call writeTemporaryData directly. Instruct researcher to call writeTemporaryData(namespace, key, data, ttlSeconds) or readFromNamespacedBlackboard(namespace, key).\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)

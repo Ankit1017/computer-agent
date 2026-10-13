@@ -1,5 +1,7 @@
 package com.agent.tools.context.services;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -7,26 +9,83 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class BlackboardServiceTest {
 
-    private final BlackboardService service = new BlackboardService();
+    private BlackboardService service;
 
-    @Test
-    @DisplayName("Should return placeholder for writeData")
-    void shouldReturnPlaceholderForWriteData() {
-        String result = service.writeData("global", "token", "abc-123");
-        assertThat(result).contains("Placeholder: Wrote 'token' to namespace 'global'.");
+    @BeforeEach
+    void setUp() {
+        service = new BlackboardService();
+    }
+
+    @AfterEach
+    void tearDown() {
+        service.shutdown();
     }
 
     @Test
-    @DisplayName("Should return placeholder for readData")
-    void shouldReturnPlaceholderForReadData() {
-        String result = service.readData("global", "token");
-        assertThat(result).contains("Placeholder: Read data for key 'token'.");
+    @DisplayName("Should write and read permanent data in global namespace")
+    void shouldWriteAndReadPermanentData() {
+        String writeResult = service.writeData("global", "apiKey", "sk-12345");
+        assertThat(writeResult).contains("Wrote key 'apiKey' to namespace 'global' (Permanent).");
+
+        String readResult = service.readData("global", "apiKey");
+        assertThat(readResult).isEqualTo("sk-12345");
     }
 
     @Test
-    @DisplayName("Should return placeholder for listKeys")
-    void shouldReturnPlaceholderForListKeys() {
-        String result = service.listKeys("global");
-        assertThat(result).contains("Placeholder: Keys in namespace 'global'");
+    @DisplayName("Should isolate keys across different namespaces")
+    void shouldIsolateKeysAcrossNamespaces() {
+        service.writeData("core", "config", "core-val");
+        service.writeData("scratchpad", "config", "scratch-val");
+
+        assertThat(service.readData("core", "config")).isEqualTo("core-val");
+        assertThat(service.readData("scratchpad", "config")).isEqualTo("scratch-val");
+        assertThat(service.readData("global", "config")).contains("not found in namespace 'global'");
+    }
+
+    @Test
+    @DisplayName("Should return error message when key is not found")
+    void shouldReturnErrorForMissingKey() {
+        String result = service.readData("global", "missingKey");
+        assertThat(result).isEqualTo("Error: Key 'missingKey' not found in namespace 'global'.");
+    }
+
+    @Test
+    @DisplayName("Should validate empty or null keys")
+    void shouldValidateEmptyOrNullKeys() {
+        assertThat(service.writeData("global", null, "val")).isEqualTo("Error: Key cannot be empty.");
+        assertThat(service.writeData("global", "   ", "val")).isEqualTo("Error: Key cannot be empty.");
+        assertThat(service.readData("global", null)).isEqualTo("Error: Key cannot be empty.");
+        assertThat(service.readData("global", "   ")).isEqualTo("Error: Key cannot be empty.");
+    }
+
+    @Test
+    @DisplayName("Should list active keys in namespace")
+    void shouldListActiveKeys() {
+        service.writeData("global", "k1", "v1");
+        service.writeData("global", "k2", "v2");
+
+        String listResult = service.listKeys("global");
+        assertThat(listResult).contains("Active keys in 'global':");
+        assertThat(listResult).contains("k1");
+        assertThat(listResult).contains("k2");
+
+        assertThat(service.listKeys("empty_namespace")).contains("Namespace 'empty_namespace' is empty.");
+    }
+
+    @Test
+    @DisplayName("Should expire temporary data after TTL expires")
+    void shouldExpireTemporaryDataAfterTtl() throws InterruptedException {
+        String writeResult = service.writeData("scratchpad", "tempToken", "secret123", 1);
+        assertThat(writeResult).contains("Expires in 1s");
+
+        // Immediately available
+        assertThat(service.readData("scratchpad", "tempToken")).isEqualTo("secret123");
+
+        // Wait for TTL expiry
+        Thread.sleep(1200);
+
+        // Expired and removed on access
+        String expiredResult = service.readData("scratchpad", "tempToken");
+        assertThat(expiredResult).contains("has expired and was removed");
     }
 }
