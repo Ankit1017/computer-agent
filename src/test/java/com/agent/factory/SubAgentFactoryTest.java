@@ -3,7 +3,8 @@ package com.agent.factory;
 import com.agent.WorkerAgent;
 import com.agent.config.AgentConfig;
 import com.agent.registry.ToolRegistry;
-import com.agent.tools.GitTools;
+import com.agent.tools.git.GitToolsFacade;
+import com.agent.tools.git.services.GitExecutionService;
 import com.agent.tools.memory.MemoryToolsFacade;
 import com.agent.tools.memory.services.LongTermMemoryService;
 import com.agent.tools.web.WebToolsFacade;
@@ -37,17 +38,18 @@ class SubAgentFactoryTest {
     private TerminalToolsFacade terminalTools;
     private WebToolsFacade webTools;
     private MemoryToolsFacade memoryTools;
-    private GitTools gitTools;
+    private GitToolsFacade gitTools;
 
     @BeforeEach
     void setUp() {
         Scanner scanner = new Scanner(System.in);
+        SecurityInterceptor security = new SecurityInterceptor(scanner);
         terminalTools = new TerminalToolsFacade(
-                new SecurityInterceptor(scanner),
+                security,
                 new CommandExecutorService(),
                 new FileSystemService()
         );
-        gitTools = new GitTools(scanner);
+        gitTools = new GitToolsFacade(security, new GitExecutionService());
         webTools = mock(WebToolsFacade.class);
         memoryTools = new MemoryToolsFacade(new LongTermMemoryService());
 
