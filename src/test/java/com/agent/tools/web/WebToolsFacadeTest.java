@@ -27,7 +27,7 @@ class WebToolsFacadeTest {
 
     @Test
     @DisplayName("Should successfully fetch raw HTML, distill to Markdown, and return content")
-    void shouldReadWebPageSuccessfully() {
+    void shouldReadWebPageSuccessfully() throws Exception {
         String testUrl = "https://example.com/test";
         String rawHtml = "<html><body><h1>Title</h1></body></html>";
         String distilledMarkdown = "# Title\nExtracted content.";
@@ -44,7 +44,7 @@ class WebToolsFacadeTest {
 
     @Test
     @DisplayName("Should catch navigation errors and return descriptive error message")
-    void shouldCatchNavigationErrors() {
+    void shouldCatchNavigationErrors() throws Exception {
         String testUrl = "https://example.com/broken";
         when(mockNavService.fetchRawHtml(testUrl)).thenThrow(new RuntimeException("Connection timed out"));
 
@@ -57,7 +57,7 @@ class WebToolsFacadeTest {
 
     @Test
     @DisplayName("Should catch distillation errors and return descriptive error message")
-    void shouldCatchDistillationErrors() {
+    void shouldCatchDistillationErrors() throws Exception {
         String testUrl = "https://example.com/malformed";
         String rawHtml = "<html>bad</html>";
         when(mockNavService.fetchRawHtml(testUrl)).thenReturn(rawHtml);
