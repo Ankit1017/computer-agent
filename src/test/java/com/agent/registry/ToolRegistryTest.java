@@ -119,9 +119,9 @@ class ToolRegistryTest {
         // Verify devops
         AgentConfig devops = configs.stream().filter(c -> "devops".equals(c.id())).findFirst().orElseThrow();
         assertThat(devops.name()).isEqualTo("DevOps Engineer");
-        assertThat(devops.tools()).containsExactly("terminal", "git", "context");
+        assertThat(devops.tools()).containsExactly("terminal", "git", "memory", "context");
         Object[] devopsTools = registry.getTools(devops.tools());
-        assertThat(devopsTools).hasSize(3);
+        assertThat(devopsTools).hasSize(4);
 
         // Verify gui_tester
         AgentConfig guiTester = configs.stream().filter(c -> "gui_tester".equals(c.id())).findFirst().orElseThrow();
