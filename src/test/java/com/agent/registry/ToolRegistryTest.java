@@ -18,6 +18,7 @@ import com.agent.tools.terminal.TerminalToolsFacade;
 import com.agent.tools.terminal.security.SecurityInterceptor;
 import com.agent.tools.terminal.services.CommandExecutorService;
 import com.agent.tools.terminal.services.FileSystemService;
+import com.agent.tools.vision.VisionToolsFacade;
 
 import java.io.InputStream;
 import java.util.List;
@@ -25,6 +26,7 @@ import java.util.Scanner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 class ToolRegistryTest {
 
@@ -34,6 +36,7 @@ class ToolRegistryTest {
     private WebTools webTools;
     private MemoryTools memoryTools;
     private ContextTools contextTools;
+    private VisionToolsFacade visionTools;
 
     @BeforeEach
     void setUp() {
@@ -47,8 +50,9 @@ class ToolRegistryTest {
         webTools = new WebTools(scanner);
         memoryTools = new MemoryTools(new AllMiniLmL6V2EmbeddingModel(), new InMemoryEmbeddingStore<TextSegment>());
         contextTools = new ContextTools();
+        visionTools = mock(VisionToolsFacade.class);
 
-        registry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools);
+        registry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools, visionTools);
     }
 
     @Test
@@ -95,7 +99,7 @@ class ToolRegistryTest {
         assertThat(is).isNotNull();
 
         List<AgentConfig> configs = mapper.readValue(is, new TypeReference<List<AgentConfig>>() {});
-        assertThat(configs).hasSize(3);
+        assertThat(configs).hasSize(4);
 
         // Verify architect
         AgentConfig architect = configs.stream().filter(c -> "architect".equals(c.id())).findFirst().orElseThrow();
@@ -117,5 +121,12 @@ class ToolRegistryTest {
         assertThat(devops.tools()).containsExactly("terminal", "git", "context");
         Object[] devopsTools = registry.getTools(devops.tools());
         assertThat(devopsTools).hasSize(3);
+
+        // Verify gui_tester
+        AgentConfig guiTester = configs.stream().filter(c -> "gui_tester".equals(c.id())).findFirst().orElseThrow();
+        assertThat(guiTester.name()).isEqualTo("GUI Automation Agent");
+        assertThat(guiTester.tools()).containsExactly("vision", "context");
+        Object[] guiTools = registry.getTools(guiTester.tools());
+        assertThat(guiTools).hasSize(2);
     }
 }

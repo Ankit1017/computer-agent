@@ -12,6 +12,7 @@ import com.agent.tools.terminal.TerminalToolsFacade;
 import com.agent.tools.terminal.security.SecurityInterceptor;
 import com.agent.tools.terminal.services.CommandExecutorService;
 import com.agent.tools.terminal.services.FileSystemService;
+import com.agent.tools.vision.VisionToolsFacade;
 import com.agent.tools.WebTools;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -77,9 +78,10 @@ public class AgentMain {
             WebTools webTools = new WebTools(scanner);
             MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);
             ContextTools contextTools = new ContextTools();
+            VisionToolsFacade visionTools = new VisionToolsFacade(security);
 
             // 4. Instantiate ToolRegistry and register tools
-            ToolRegistry toolRegistry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools);
+            ToolRegistry toolRegistry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools, visionTools);
 
             // 5. Initialize Chat Model and SubAgentFactory
             ChatLanguageModel model = OllamaModelFactory.createModel();
