@@ -114,4 +114,135 @@ public class VisionToolsFacadeTest {
         verify(mockRobot, times(1)).createScreenCapture(any(Rectangle.class));
         verify(mockVisionModel, times(1)).generate(any(UserMessage.class));
     }
+
+    @Test
+    void shouldBlockClickGridOffsetWhenSecurityDenied() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(false);
+
+        String result = facade.clickGridOffset(45, 0.2, 0.8);
+
+        assertEquals("ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.", result);
+        verify(mockSecurity, times(1)).requestPermission(
+                eq("precision click at"),
+                eq("Grid ID:45 (X:520, Y:480)")
+        );
+        verify(mockRobot, never()).mouseMove(anyInt(), anyInt());
+    }
+
+    @Test
+    void shouldPerformPrecisionClickWhenSecurityApproved() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(true);
+
+        String result = facade.clickGridOffset(45, 0.2, 0.8);
+
+        assertTrue(result.contains("Precision clicked at Grid 45 (520, 480)."));
+        verify(mockRobot, times(1)).mouseMove(520, 480);
+        verify(mockRobot, times(1)).mousePress(InputEvent.BUTTON1_DOWN_MASK);
+        verify(mockRobot, times(1)).mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+    }
+
+    @Test
+    void shouldClampOffsetPercentInClickGridOffset() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(true);
+
+        facade.clickGridOffset(45, -0.5, 1.5);
+
+        // col=5 -> base 500, clampX=0.0 -> 500
+        // row=4 -> base 400, clampY=1.0 -> 500
+        verify(mockRobot, times(1)).mouseMove(500, 500);
+    }
+
+    @Test
+    void shouldBlockDoubleClickWhenSecurityDenied() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(false);
+
+        String result = facade.doubleClickGridId(45);
+
+        assertEquals("ACTION REJECTED: User explicitly denied the double click. Do not retry this action.", result);
+        verify(mockRobot, never()).mouseMove(anyInt(), anyInt());
+    }
+
+    @Test
+    void shouldPerformDoubleClickWhenSecurityApproved() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(true);
+
+        String result = facade.doubleClickGridId(45);
+
+        assertEquals("Double-clicked at Grid ID 45.", result);
+        verify(mockRobot, times(1)).mouseMove(550, 450);
+        verify(mockRobot, times(2)).mousePress(InputEvent.BUTTON1_DOWN_MASK);
+        verify(mockRobot, times(2)).mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+    }
+
+    @Test
+    void shouldBlockRightClickWhenSecurityDenied() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(false);
+
+        String result = facade.rightClickGridId(45);
+
+        assertEquals("ACTION REJECTED: User explicitly denied the right click. Do not retry this action.", result);
+        verify(mockRobot, never()).mouseMove(anyInt(), anyInt());
+    }
+
+    @Test
+    void shouldPerformRightClickWhenSecurityApproved() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(true);
+
+        String result = facade.rightClickGridId(45);
+
+        assertEquals("Right-clicked at Grid ID 45.", result);
+        verify(mockRobot, times(1)).mouseMove(550, 450);
+        verify(mockRobot, times(1)).mousePress(InputEvent.BUTTON3_DOWN_MASK);
+        verify(mockRobot, times(1)).mouseRelease(InputEvent.BUTTON3_DOWN_MASK);
+    }
+
+    @Test
+    void shouldBlockScrollWhenSecurityDenied() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(false);
+
+        String result = facade.scrollMouse(5);
+
+        assertEquals("ACTION REJECTED: User explicitly denied mouse scroll. Do not retry this action.", result);
+        verify(mockRobot, never()).mouseWheel(anyInt());
+    }
+
+    @Test
+    void shouldPerformScrollWhenSecurityApproved() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(true);
+
+        String result = facade.scrollMouse(-3);
+
+        assertEquals("Scrolled mouse -3 notches.", result);
+        verify(mockRobot, times(1)).mouseWheel(-3);
+    }
+
+    @Test
+    void shouldBlockPressHotkeyWhenSecurityDenied() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(false);
+
+        String result = facade.pressHotkey("ctrl+s");
+
+        assertEquals("ACTION REJECTED: User explicitly denied hotkey press. Do not retry this action.", result);
+        verify(mockRobot, never()).keyPress(anyInt());
+    }
+
+    @Test
+    void shouldPerformPressHotkeyWhenSecurityApproved() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(true);
+
+        String result = facade.pressHotkey("ctrl+s");
+
+        assertEquals("Executed hotkey: ctrl+s", result);
+        verify(mockRobot, atLeastOnce()).keyPress(anyInt());
+        verify(mockRobot, atLeastOnce()).keyRelease(anyInt());
+    }
+
+    @Test
+    void shouldHandleUnrecognizedHotkey() {
+        when(mockSecurity.requestPermission(anyString(), anyString())).thenReturn(true);
+
+        String result = facade.pressHotkey("foo+bar");
+
+        assertTrue(result.contains("Error: Unrecognized key 'foo'."));
+    }
 }

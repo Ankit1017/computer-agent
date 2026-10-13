@@ -172,4 +172,159 @@ public class VisionToolsFacade {
             return "Error typing text: " + e.getMessage();
         }
     }
+
+    @Tool("Click at a precise relative offset inside a grid cell (0-99). offsetPercentX and offsetPercentY range from 0.0 (top-left) to 1.0 (bottom-right). Center is 0.5, 0.5.")
+    public String clickGridOffset(
+            @P("Grid cell ID (0-99)") int gridId,
+            @P("Horizontal offset within cell (0.0 to 1.0)") double offsetPercentX,
+            @P("Vertical offset within cell (0.0 to 1.0)") double offsetPercentY) {
+        if (gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+            return "Error: Invalid grid ID. Must be between 0 and 99.";
+        }
+        double clampX = Math.max(0.0, Math.min(1.0, offsetPercentX));
+        double clampY = Math.max(0.0, Math.min(1.0, offsetPercentY));
+
+        int cellWidth = screenSize.width / GRID_COLS;
+        int cellHeight = screenSize.height / GRID_ROWS;
+        int col = gridId % GRID_COLS;
+        int row = gridId / GRID_COLS;
+
+        int targetX = (int) ((col * cellWidth) + (clampX * cellWidth));
+        int targetY = (int) ((row * cellHeight) + (clampY * cellHeight));
+
+        if (!security.requestPermission("precision click at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
+            return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
+        }
+
+        try {
+            robot.mouseMove(targetX, targetY);
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+            return "Precision clicked at Grid " + gridId + " (" + targetX + ", " + targetY + ").";
+        } catch (Exception e) {
+            return "Error precision clicking: " + e.getMessage();
+        }
+    }
+
+    @Tool("Double-click the mouse at the center of a grid ID (0-99).")
+    public String doubleClickGridId(@P("Grid cell ID (0-99)") int gridId) {
+        if (gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+            return "Error: Invalid grid ID. Must be between 0 and 99.";
+        }
+        int cellWidth = screenSize.width / GRID_COLS;
+        int cellHeight = screenSize.height / GRID_ROWS;
+        int targetX = (gridId % GRID_COLS) * cellWidth + (cellWidth / 2);
+        int targetY = (gridId / GRID_COLS) * cellHeight + (cellHeight / 2);
+
+        if (!security.requestPermission("double-click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
+            return "ACTION REJECTED: User explicitly denied the double click. Do not retry this action.";
+        }
+
+        try {
+            robot.mouseMove(targetX, targetY);
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+            robot.delay(100);
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+            return "Double-clicked at Grid ID " + gridId + ".";
+        } catch (Exception e) {
+            return "Error double clicking: " + e.getMessage();
+        }
+    }
+
+    @Tool("Right-click (context menu) at the center of a grid ID (0-99).")
+    public String rightClickGridId(@P("Grid cell ID (0-99)") int gridId) {
+        if (gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+            return "Error: Invalid grid ID. Must be between 0 and 99.";
+        }
+        int cellWidth = screenSize.width / GRID_COLS;
+        int cellHeight = screenSize.height / GRID_ROWS;
+        int targetX = (gridId % GRID_COLS) * cellWidth + (cellWidth / 2);
+        int targetY = (gridId / GRID_COLS) * cellHeight + (cellHeight / 2);
+
+        if (!security.requestPermission("right-click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
+            return "ACTION REJECTED: User explicitly denied the right click. Do not retry this action.";
+        }
+
+        try {
+            robot.mouseMove(targetX, targetY);
+            robot.mousePress(InputEvent.BUTTON3_DOWN_MASK);
+            robot.mouseRelease(InputEvent.BUTTON3_DOWN_MASK);
+            return "Right-clicked at Grid ID " + gridId + ".";
+        } catch (Exception e) {
+            return "Error right clicking: " + e.getMessage();
+        }
+    }
+
+    @Tool("Scroll the mouse wheel. Positive notches scroll down; negative notches scroll up.")
+    public String scrollMouse(@P("Number of scroll wheel notches (e.g., 5 for down, -5 for up)") int notches) {
+        if (!security.requestPermission("scroll mouse wheel", notches + " notches")) {
+            return "ACTION REJECTED: User explicitly denied mouse scroll. Do not retry this action.";
+        }
+        try {
+            robot.mouseWheel(notches);
+            return "Scrolled mouse " + notches + " notches.";
+        } catch (Exception e) {
+            return "Error scrolling: " + e.getMessage();
+        }
+    }
+
+    @Tool("Trigger a key or combination hotkey (e.g., 'enter', 'esc', 'tab', 'ctrl+s', 'alt+f4', 'ctrl+shift+p').")
+    public String pressHotkey(@P("Hotkey combination separated by '+'") String hotkey) {
+        if (hotkey == null || hotkey.isBlank()) return "Error: Hotkey string cannot be empty.";
+        if (!security.requestPermission("press hotkey", hotkey)) {
+            return "ACTION REJECTED: User explicitly denied hotkey press. Do not retry this action.";
+        }
+
+        String[] parts = hotkey.trim().toLowerCase().split("\\+");
+        java.util.List<Integer> keyCodes = new java.util.ArrayList<>();
+
+        for (String part : parts) {
+            part = part.trim();
+            switch (part) {
+                case "ctrl", "control" -> keyCodes.add(KeyEvent.VK_CONTROL);
+                case "alt" -> keyCodes.add(KeyEvent.VK_ALT);
+                case "shift" -> keyCodes.add(KeyEvent.VK_SHIFT);
+                case "win", "meta", "cmd" -> keyCodes.add(KeyEvent.VK_WINDOWS);
+                case "enter", "return" -> keyCodes.add(KeyEvent.VK_ENTER);
+                case "esc", "escape" -> keyCodes.add(KeyEvent.VK_ESCAPE);
+                case "tab" -> keyCodes.add(KeyEvent.VK_TAB);
+                case "backspace" -> keyCodes.add(KeyEvent.VK_BACK_SPACE);
+                case "space" -> keyCodes.add(KeyEvent.VK_SPACE);
+                case "up" -> keyCodes.add(KeyEvent.VK_UP);
+                case "down" -> keyCodes.add(KeyEvent.VK_DOWN);
+                case "left" -> keyCodes.add(KeyEvent.VK_LEFT);
+                case "right" -> keyCodes.add(KeyEvent.VK_RIGHT);
+                default -> {
+                    if (part.length() == 1) {
+                        keyCodes.add(KeyEvent.getExtendedKeyCodeForChar(part.charAt(0)));
+                    } else if (part.matches("f\\d{1,2}")) {
+                        int fNum = Integer.parseInt(part.substring(1));
+                        keyCodes.add(KeyEvent.VK_F1 + (fNum - 1));
+                    } else {
+                        return "Error: Unrecognized key '" + part + "'.";
+                    }
+                }
+            }
+        }
+
+        try {
+            // Press keys sequentially
+            for (int code : keyCodes) {
+                robot.keyPress(code);
+            }
+            robot.delay(50);
+            return "Executed hotkey: " + hotkey;
+        } catch (Exception e) {
+            return "Error pressing hotkey: " + e.getMessage();
+        } finally {
+            // Guarantee key release in reverse order to avoid stuck system keys
+            for (int i = keyCodes.size() - 1; i >= 0; i--) {
+                try {
+                    robot.keyRelease(keyCodes.get(i));
+                } catch (Exception ignored) {}
+            }
+        }
+    }
 }

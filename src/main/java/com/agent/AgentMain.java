@@ -120,6 +120,7 @@ public class AgentMain {
             StringBuilder managerPrompt = new StringBuilder(
                     "You are the Swarm Orchestrator. You do not have direct access to the OS or web.\n" +
                     "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask.\n" +
+                    "Whenever the user asks an agent to do something (e.g. 'Have the <agent>...', 'Tell <agent> to...', 'Ask <agent> to...'), you MUST delegate the instruction to that sub-agent immediately.\n" +
                     "CRITICAL: If you have multiple tasks that do not depend on each other, you MUST use the delegateParallel tool to execute them simultaneously.\n" +
                     "BLACKBOARD: Your sub-agents share a Blackboard via the 'context' tool. If Agent A needs to pass a large piece of data or sensitive credential to Agent B, instruct Agent A to write it to the blackboard with a specific key, and instruct Agent B to read from that key.\n" +
                     "Available agents:\n"
