@@ -23,55 +23,38 @@ public class ToolRegistry {
 
     /**
      * Initializes the tool registry with standard agent tools.
-     *
-     * @param terminalTools terminal and filesystem operations facade
-     * @param gitTools      git version control operations
-     * @param webTools      web scraping and HTTP interaction
-     * @param memoryTools   long-term vector memory operations
      */
     public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools) {
-        this(terminalTools, gitTools, webTools, memoryTools, null);
+        this(terminalTools, gitTools, (Object) webTools, memoryTools, null, null);
+    }
+
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, com.agent.tools.web.WebToolsFacade webTools, MemoryTools memoryTools) {
+        this(terminalTools, gitTools, (Object) webTools, memoryTools, null, null);
     }
 
     /**
      * Initializes the tool registry with standard agent tools and shared context blackboard.
-     *
-     * @param terminalTools terminal and filesystem operations facade
-     * @param gitTools      git version control operations
-     * @param webTools      web scraping and HTTP interaction
-     * @param memoryTools   long-term vector memory operations
-     * @param contextTools  shared blackboard memory operations
      */
     public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools, ContextTools contextTools) {
-        if (terminalTools != null) {
-            registerTool("terminal", terminalTools);
-        }
-        if (gitTools != null) {
-            registerTool("git", gitTools);
-        }
-        if (webTools != null) {
-            registerTool("web", webTools);
-        }
-        if (memoryTools != null) {
-            registerTool("memory", memoryTools);
-        }
-        if (contextTools != null) {
-            registerTool("context", contextTools);
-        }
-        log.info("Initialized ToolRegistry with available tools: {}", toolMap.keySet());
+        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, null);
+    }
+
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, com.agent.tools.web.WebToolsFacade webTools, MemoryTools memoryTools, ContextTools contextTools) {
+        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, null);
     }
 
     /**
      * Initializes the tool registry with standard agent tools, shared context blackboard, and vision tools.
-     *
-     * @param terminalTools terminal and filesystem operations facade
-     * @param gitTools      git version control operations
-     * @param webTools      web scraping and HTTP interaction
-     * @param memoryTools   long-term vector memory operations
-     * @param contextTools  shared blackboard memory operations
-     * @param visionTools   Set-of-Marks screen inspection and GUI actuation
      */
     public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, WebTools webTools, MemoryTools memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
+        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, visionTools);
+    }
+
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, com.agent.tools.web.WebToolsFacade webTools, MemoryTools memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
+        this(terminalTools, gitTools, (Object) webTools, memoryTools, contextTools, visionTools);
+    }
+
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitTools gitTools, Object webTools, MemoryTools memoryTools, ContextTools contextTools, VisionToolsFacade visionTools) {
         if (terminalTools != null) {
             registerTool("terminal", terminalTools);
         }
