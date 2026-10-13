@@ -3,8 +3,9 @@ package com.agent;
 import com.agent.config.AgentConfig;
 import com.agent.factory.OllamaModelFactory;
 import com.agent.factory.SubAgentFactory;
+import com.agent.orchestration.DelegationFacade;
+import com.agent.orchestration.services.OrchestrationService;
 import com.agent.registry.ToolRegistry;
-import com.agent.tools.DelegationTool;
 import com.agent.tools.context.ContextToolsFacade;
 import com.agent.tools.context.services.BlackboardService;
 import com.agent.tools.git.GitToolsFacade;
@@ -136,17 +137,17 @@ public class AgentMain {
                 swarm.put(config.id(), factory.createAgent(config));
             }
 
-            // 8. Create the Delegation Tool holding the swarm
-            DelegationTool delegationTool = new DelegationTool(swarm, blackboardService);
+            // 8. Create the Orchestration Service & Delegation Facade
+            OrchestrationService orchestrationService = new OrchestrationService(factory, blackboardService);
+            DelegationFacade delegationFacade = new DelegationFacade(orchestrationService);
 
             // 9. Build the Manager's dynamic prompt
             StringBuilder managerPrompt = new StringBuilder(
                     "You are the Swarm Orchestrator. You do not have direct access to the OS, web, filesystem, or memory.\n" +
-                    "CRITICAL: You ONLY have two tools: 'delegateTask' and 'delegateParallel'. You DO NOT have tools like writeTemporaryData, readFromNamespacedBlackboard, or executeCommand. You MUST ALWAYS call delegateTask to have sub-agents perform actions.\n" +
+                    "CRITICAL: You ONLY have the tool: 'delegateTask'. You DO NOT have tools like writeTemporaryData, readFromNamespacedBlackboard, or executeCommand. You MUST ALWAYS call delegateTask to have sub-agents perform actions.\n" +
                     "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask.\n" +
                     "Whenever the user asks an agent to do something (e.g. 'Have the <agent>...', 'Tell <agent> to...', 'Ask <agent> to...', 'First, have <agent>...'), you MUST delegate the instruction to that sub-agent immediately using delegateTask.\n" +
                     "When the user gives a multi-step instruction (e.g. 'First, have <agentA> do X. Second, have <agentB> do Y.'), you MUST execute them sequentially: call delegateTask for <agentA> first, then call delegateTask for <agentB>, and then synthesize and report the result to the user.\n" +
-                    "CRITICAL: If you have multiple tasks that do not depend on each other, you MUST use the delegateParallel tool to execute them simultaneously.\n" +
                     "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly (e.g. 'What is the project code name?') WITHOUT instructing them to read from the blackboard!\n" +
                     "Available agents:\n"
             );
@@ -156,7 +157,7 @@ public class AgentMain {
             }
             managerPrompt.append("\nROLE AWARENESS:\n")
                     .append(" - 'researcher' (Web Research Specialist): Dedicated to searching the web, navigating pages, reading documentation, and synthesizing external information.\n")
-                    .append("\nWhen tasks are independent, ALWAYS use delegateParallel. When tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n\n")
+                    .append("\nWhen tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n\n")
                     .append("HOST OS & COMMAND EXECUTION:\n")
                     .append("Host OS is: ").append(System.getProperty("os.name")).append(".\n")
                     .append("When requesting terminal commands from devops, ensure syntax matches the host OS (e.g. on Windows use 'ping -n 4' instead of '-c 4', and for sleep/delay use 'powershell -Command Start-Sleep -Seconds 65' instead of 'sleep 65'). Always delegate distinct sequential steps as separate tasks (run ping first, then run sleep/timeout).\n\n")
@@ -175,7 +176,7 @@ public class AgentMain {
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)
                     .chatLanguageModel(model)
                     .chatMemory(MessageWindowChatMemory.withMaxMessages(20))
-                    .tools(delegationTool)
+                    .tools(delegationFacade)
                     .systemMessageProvider(chatMemoryId -> managerPrompt.toString())
                     .build();
 

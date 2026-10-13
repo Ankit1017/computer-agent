@@ -10,7 +10,9 @@ import dev.langchain4j.service.AiServices;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Dynamic factory that instantiates specialized WorkerAgent proxies from AgentConfig.
@@ -22,6 +24,7 @@ public class SubAgentFactory {
 
     private final ChatLanguageModel chatModel;
     private final ToolRegistry toolRegistry;
+    private final Map<String, WorkerAgent> agents = new ConcurrentHashMap<>();
 
     /**
      * Creates a new SubAgentFactory.
@@ -50,11 +53,40 @@ public class SubAgentFactory {
         Object[] tools = toolRegistry.getTools(config.tools());
         ChatMemory memory = MessageWindowChatMemory.withMaxMessages(10);
 
-        return AiServices.builder(WorkerAgent.class)
+        WorkerAgent agent = AiServices.builder(WorkerAgent.class)
                 .chatLanguageModel(chatModel)
                 .chatMemory(memory)
                 .tools(tools)
                 .systemMessageProvider(chatMemoryId -> config.systemMessage())
                 .build();
+
+        agents.put(config.id(), agent);
+        return agent;
+    }
+
+    /**
+     * Retrieves an active WorkerAgent by ID.
+     *
+     * @param agentId unique agent identifier
+     * @return the WorkerAgent proxy, or null if not found
+     */
+    public WorkerAgent getAgent(String agentId) {
+        if (agentId == null) {
+            return null;
+        }
+        return agents.get(agentId.trim());
+    }
+
+    /**
+     * Registers a custom WorkerAgent instance under the given ID.
+     * Useful for testing and custom proxy registration.
+     *
+     * @param agentId unique agent identifier
+     * @param agent   WorkerAgent instance
+     */
+    public void registerAgent(String agentId, WorkerAgent agent) {
+        if (agentId != null && agent != null) {
+            agents.put(agentId.trim(), agent);
+        }
     }
 }
