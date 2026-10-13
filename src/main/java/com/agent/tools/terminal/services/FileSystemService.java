@@ -60,16 +60,21 @@ public class FileSystemService {
                 ? "(?i).*(\\.git|target|node_modules|\\.idea|build|dist|out|venv|__pycache__).*"
                 : excludeRegex;
 
+        int depthLimit = maxDepth <= 0 ? 1 : maxDepth;
         StringBuilder sb = new StringBuilder("Directory Tree for " + directoryPath + ":\n");
-        try (Stream<Path> stream = Files.walk(start, maxDepth)) {
+        try (Stream<Path> stream = Files.walk(start, depthLimit)) {
             List<Path> entries = stream
                     .filter(path -> !path.toString().replace("\\", "/").matches(regex))
                     .limit(150)
                     .toList();
 
             for (Path path : entries) {
+                if (path.equals(start)) {
+                    sb.append(path.getFileName() != null ? path.getFileName().toString() : path.toString()).append("/\n");
+                    continue;
+                }
                 int depth = start.relativize(path).getNameCount();
-                String prefix = (depth == 0) ? "" : "  ".repeat(depth - 1) + "|-- ";
+                String prefix = "  ".repeat(depth - 1) + "|-- ";
                 sb.append(prefix).append(path.getFileName() != null ? path.getFileName().toString() : path.toString());
                 if (Files.isDirectory(path)) {
                     sb.append("/");
@@ -284,12 +289,18 @@ public class FileSystemService {
     }
 
     private Path resolveFilePath(String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return Paths.get(".");
+        }
         Path path = Paths.get(filePath);
+        if (path.getFileName() == null) {
+            return path;
+        }
         if (!Files.exists(path)) {
             try (Stream<Path> search = Files.walk(Paths.get("."))) {
                 java.util.Optional<Path> found = search
                         .filter(Files::isRegularFile)
-                        .filter(p -> p.getFileName().toString().equalsIgnoreCase(path.getFileName().toString()))
+                        .filter(p -> p.getFileName() != null && p.getFileName().toString().equalsIgnoreCase(path.getFileName().toString()))
                         .filter(p -> {
                             String s = p.toString().replace("\\", "/");
                             return !s.contains("/target/") && !s.contains("/.git/") && !s.contains("/.idea/");
@@ -414,6 +425,9 @@ public class FileSystemService {
     public String regexReplaceInFile(String filePath, String regex, String replacement) {
         if (filePath == null || filePath.isBlank()) {
             return "Error: File path cannot be empty.";
+        }
+        if (regex == null || regex.isEmpty()) {
+            return "Error: Regex pattern cannot be empty.";
         }
         Path path = resolveFilePath(filePath);
         if (!Files.exists(path)) return "Error: File does not exist.";

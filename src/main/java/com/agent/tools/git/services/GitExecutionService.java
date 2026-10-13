@@ -3,6 +3,7 @@ package com.agent.tools.git.services;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 public class GitExecutionService {
@@ -58,12 +59,15 @@ public class GitExecutionService {
     }
 
     public String commitChanges(String commitMessage) {
+        if (commitMessage == null || commitMessage.isBlank()) {
+            return "Error: Commit message cannot be empty.";
+        }
         try {
             // First, stage all changes
             String addOutput = executeCommand("git", "add", ".");
             
             // Second, execute the commit
-            String commitOutput = executeCommand("git", "commit", "-m", commitMessage);
+            String commitOutput = executeCommand("git", "commit", "-m", commitMessage.trim());
             
             return "Successfully committed changes.\nCommit Output:\n" + commitOutput;
         } catch (Exception e) {
@@ -82,7 +86,7 @@ public class GitExecutionService {
         Process process = builder.start();
         
         StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");

@@ -30,6 +30,7 @@ class OrchestrationServiceTest {
 
     @AfterEach
     void tearDown() {
+        orchestrationService.close();
         blackboardService.shutdown();
     }
 
@@ -114,6 +115,15 @@ class OrchestrationServiceTest {
     }
 
     @Test
+    @DisplayName("Should fail fast on null or blank task routing inputs without retrying")
+    void shouldFailFastOnInvalidTaskInputs() {
+        assertThat(orchestrationService.routeTask(null, "do work")).isEqualTo("Error: Agent ID cannot be empty.");
+        assertThat(orchestrationService.routeTask("   ", "do work")).isEqualTo("Error: Agent ID cannot be empty.");
+        assertThat(orchestrationService.routeTask("developer", null)).isEqualTo("Error: Task description cannot be empty.");
+        assertThat(orchestrationService.routeTask("developer", "   ")).isEqualTo("Error: Task description cannot be empty.");
+    }
+
+    @Test
     @DisplayName("Should execute parallel tasks concurrently and synthesize responses")
     void shouldExecuteParallelTasksConcurrently() {
         WorkerAgent devopsAgent = task -> "Git status: clean";
@@ -132,5 +142,15 @@ class OrchestrationServiceTest {
                 .contains("Git status: clean")
                 .contains("=== Response from researcher ===")
                 .contains("Virtual Threads allow massive concurrency.");
+    }
+
+    @Test
+    @DisplayName("Should fail fast on invalid parallel task inputs")
+    void shouldFailFastOnInvalidParallelInputs() {
+        String result = orchestrationService.routeParallelTasks(null, "task1", "devops", "task2");
+        assertThat(result).isEqualTo("Error: Invalid arguments for agent 1 in parallel routing.");
+
+        String result2 = orchestrationService.routeParallelTasks("devops", "task1", "", "task2");
+        assertThat(result2).isEqualTo("Error: Invalid arguments for agent 2 in parallel routing.");
     }
 }

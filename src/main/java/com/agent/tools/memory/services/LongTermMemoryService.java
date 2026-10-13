@@ -41,11 +41,18 @@ public class LongTermMemoryService {
 
     public String storeInformation(String fact) {
         if (!isAvailable) return "Error: Memory store is offline.";
+        if (fact == null || fact.isBlank()) {
+            return "Error: Information to store cannot be empty.";
+        }
         try {
             // Split long facts to ensure high-quality embeddings
-            Document document = Document.from(fact);
+            Document document = Document.from(fact.trim());
             List<TextSegment> segments = DocumentSplitters.recursive(500, 50).split(document);
             
+            if (segments.isEmpty()) {
+                return "Error: No valid content found to store.";
+            }
+
             embeddingStore.addAll(embeddingModel.embedAll(segments).content(), segments);
             return "Successfully stored information in long-term memory. Segments created: " + segments.size();
         } catch (Exception e) {
@@ -55,22 +62,28 @@ public class LongTermMemoryService {
 
     public String searchInformation(String query) {
         if (!isAvailable) return "Error: Memory store is offline.";
+        if (query == null || query.isBlank()) {
+            return "Error: Query cannot be empty.";
+        }
         try {
             List<EmbeddingMatch<TextSegment>> matches = embeddingStore.findRelevant(
-                    embeddingModel.embed(query).content(),
+                    embeddingModel.embed(query.trim()).content(),
                     3, // Return top 3 most relevant facts
                     0.5 // Minimum relevance score
             );
 
-            if (matches.isEmpty()) {
+            if (matches == null || matches.isEmpty()) {
                 return "No highly relevant information found in long-term memory for query: '" + query + "'";
             }
 
             StringBuilder sb = new StringBuilder("Semantic Search Results for '" + query + "':\n\n");
             for (int i = 0; i < matches.size(); i++) {
-                sb.append("--- Fact ").append(i + 1).append(" (Relevance: ")
-                  .append(String.format("%.2f", matches.get(i).score())).append(") ---\n");
-                sb.append(matches.get(i).embedded().text()).append("\n\n");
+                EmbeddingMatch<TextSegment> match = matches.get(i);
+                if (match != null && match.embedded() != null) {
+                    sb.append("--- Fact ").append(i + 1).append(" (Relevance: ")
+                      .append(String.format("%.2f", match.score())).append(") ---\n");
+                    sb.append(match.embedded().text()).append("\n\n");
+                }
             }
             return sb.toString().trim();
         } catch (Exception e) {

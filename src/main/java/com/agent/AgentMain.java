@@ -4,6 +4,7 @@ import com.agent.config.AgentConfig;
 import com.agent.factory.OllamaModelFactory;
 import com.agent.factory.SubAgentFactory;
 import com.agent.orchestration.DelegationFacade;
+import com.agent.orchestration.OrchestratorPromptBuilder;
 import com.agent.orchestration.services.OrchestrationService;
 import com.agent.registry.ToolRegistry;
 import com.agent.tools.context.ContextToolsFacade;
@@ -24,15 +25,9 @@ import com.agent.tools.web.services.WebNavigationService;
 import com.agent.tools.web.services.WebSearchService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.service.AiServices;
-import dev.langchain4j.store.embedding.EmbeddingStore;
-import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,194 +35,156 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+
 public class AgentMain {
 
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Agent - Milestone 7.2 Swarm Orchestrator Active");
+        log.info("Starting Computer Agent - Milestone 9.0.5.0 Swarm Orchestrator Active");
 
-        try {
-            // 1. Shared Scanner for both chat input and HITL tool security confirmation
-            Scanner scanner = new Scanner(System.in);
-
-            // 2. Initialize Web Navigation Service, Blackboard Service & Graceful Shutdown Hook
+        try (Scanner scanner = new Scanner(System.in)) {
+            // 1. Core Services & Shutdown
             WebNavigationService navService = new WebNavigationService();
             BlackboardService blackboardService = new BlackboardService();
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                System.out.println("\n[SYSTEM] Graceful shutdown initiated. Releasing resources...");
-                try {
-                    if (navService != null) {
-                        navService.close();
-                    }
-                    if (blackboardService != null) {
-                        blackboardService.shutdown();
-                    }
-                } catch (Exception e) {
-                    System.err.println("Error during shutdown: " + e.getMessage());
-                }
-                System.out.println("[SYSTEM] Shutdown complete. Goodbye.");
-            }));
 
-            // 3. Initialize Local Vector Store & In-Process ONNX Embedding Model
-            EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
-            EmbeddingStore<TextSegment> embeddingStore;
-            try {
-                embeddingStore = ChromaEmbeddingStore.builder()
-                        .baseUrl("http://localhost:8000")
-                        .collectionName("agent_memory")
-                        .timeout(Duration.ofSeconds(2))
-                        .build();
-            } catch (Exception e) {
-                log.warn("ChromaDB not reachable at http://localhost:8000, using in-memory store for verification");
-                embeddingStore = new InMemoryEmbeddingStore<>();
-            }
-
-            // 4. Instantiate Tools
-            SecurityInterceptor security = new SecurityInterceptor(scanner);
-            CommandExecutorService cmdService = new CommandExecutorService();
-            FileSystemService fsService = new FileSystemService();
-            TerminalToolsFacade terminalTools = new TerminalToolsFacade(security, cmdService, fsService);
-            GitExecutionService gitService = new GitExecutionService();
-            GitToolsFacade gitTools = new GitToolsFacade(security, gitService);
-            WebDistillationService webDistService = new WebDistillationService();
-            WebSearchService webSearchService = new WebSearchService();
-            WebAnalysisService webAnalysisService = new WebAnalysisService();
-            WebToolsFacade webTools = new WebToolsFacade(security, navService, webDistService, webSearchService, webAnalysisService);
-            LongTermMemoryService longTermMemoryService = new LongTermMemoryService();
-            MemoryToolsFacade memoryTools = new MemoryToolsFacade(longTermMemoryService);
-            ContextToolsFacade contextTools = new ContextToolsFacade(blackboardService);
-            VisionToolsFacade visionTools = new VisionToolsFacade(security);
-
-            // 4. Instantiate ToolRegistry and register tools
-            ToolRegistry toolRegistry = new ToolRegistry(terminalTools, gitTools, webTools, memoryTools, contextTools, visionTools);
-
-            // 5. Initialize Chat Model and SubAgentFactory
+            // 2. Initialize Tools & SubAgent Factory
+            ToolRegistry toolRegistry = initializeTools(scanner, navService, blackboardService);
             ChatLanguageModel model = OllamaModelFactory.createModel();
             SubAgentFactory factory = new SubAgentFactory(model, toolRegistry);
 
-            // 6. Read agents.json from working directory or fallback to classpath
-            ObjectMapper mapper = new ObjectMapper();
-            List<AgentConfig> configs;
-            InputStream configStream;
-            Path localConfig = Path.of("agents.json");
-            if (Files.exists(localConfig)) {
-                System.out.println("[CONFIG] Loading agents manifest from working directory: " + localConfig.toAbsolutePath());
-                configStream = Files.newInputStream(localConfig);
-            } else {
-                System.out.println("[CONFIG] Loading default agents manifest from classpath resources.");
-                configStream = AgentMain.class.getClassLoader().getResourceAsStream("agents.json");
-                if (configStream == null) {
-                    throw new IllegalStateException("agents.json not found on disk or classpath!");
-                }
-            }
-            try (configStream) {
-                configs = mapper.readValue(configStream, new TypeReference<List<AgentConfig>>() {});
-            }
+            // 3. Load Configs & Spawn Sub-Agents
+            List<AgentConfig> configs = loadAgentConfigs();
+            Map<String, WorkerAgent> swarm = spawnSubAgents(configs, factory);
 
-            // 7. Initialize the Swarm map of specialized sub-agents
-            Map<String, WorkerAgent> swarm = new HashMap<>();
-            for (AgentConfig config : configs) {
-                log.info("Spawning swarm sub-agent: '{}' [{}]", config.name(), config.id());
-                swarm.put(config.id(), factory.createAgent(config));
-            }
-
-            // 8. Create the Orchestration Service & Delegation Facade
+            // 4. Build Orchestrator
             OrchestrationService orchestrationService = new OrchestrationService(factory, blackboardService);
-            DelegationFacade delegationFacade = new DelegationFacade(orchestrationService);
+            registerShutdownHook(navService, blackboardService, orchestrationService);
+            WorkerAgent orchestrator = buildOrchestrator(model, orchestrationService, configs);
 
-            // 9. Build the Manager's dynamic prompt
-            StringBuilder managerPrompt = new StringBuilder(
-                    "You are the Swarm Orchestrator. You do not have direct access to the OS, web, filesystem, or memory.\n" +
-                    "CRITICAL: You ONLY have the tools: 'delegateTask' and 'delegateParallel'. You DO NOT have tools like writeTemporaryData, readFromNamespacedBlackboard, or executeCommand. You MUST ALWAYS call delegateTask or delegateParallel to have sub-agents perform actions.\n" +
-                    "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask or delegateParallel.\n" +
-                    "Whenever the user asks an agent to do something (e.g. 'Have the <agent>...', 'Tell <agent> to...', 'Ask <agent> to...', 'First, have <agent>...'), you MUST delegate the instruction to that sub-agent immediately using delegateTask.\n" +
-                    "When the user gives a multi-step instruction (e.g. 'First, have <agentA> do X. Second, have <agentB> do Y.'), you MUST execute them sequentially: call delegateTask for <agentA> first, then call delegateTask for <agentB>, and then synthesize and report the result to the user.\n" +
-                    "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly (e.g. 'What is the project code name?') WITHOUT instructing them to read from the blackboard!\n" +
-                    "Available agents:\n"
-            );
-            for (AgentConfig config : configs) {
-                managerPrompt.append("- ").append(config.id()).append(": ").append(config.name())
-                        .append(" - ").append(config.systemMessage()).append("\n");
-            }
-            managerPrompt.append("\nROLE AWARENESS:\n")
-                    .append(" - 'researcher' (Web Research Specialist): Dedicated to searching the web, navigating pages, reading documentation, and synthesizing external information.\n")
-                    .append("\nWhen tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n")
-                    .append("PARALLEL EXECUTION:\n")
-                    .append("3. Use 'delegateParallel' to execute independent tasks concurrently to save time. For example, if you need the researcher to look up a topic and the devops engineer to check git status, delegate them in parallel.\n\n")
-                    .append("HOST OS & COMMAND EXECUTION:\n")
-                    .append("Host OS is: ").append(System.getProperty("os.name")).append(".\n")
-                    .append("When requesting terminal commands from devops, ensure syntax matches the host OS (e.g. on Windows use 'ping -n 4' instead of '-c 4', and for sleep/delay use 'powershell -Command Start-Sleep -Seconds 65' instead of 'sleep 65'). Always delegate distinct sequential steps as separate tasks (run ping first, then run sleep/timeout).\n\n")
-                    .append("GOAL ADHERENCE & ANTI-LOOPING:\n")
-                    .append("1. Never repeat the exact same delegation if it failed, returned no useful data, OR if the user denied permission via a security interceptor. If an action is denied, inform the user and ask how they want to proceed.\n")
-                    .append("2. If a sub-agent returns a massive chunk of irrelevant data, ignore the irrelevant parts and stick strictly to your original goal.\n")
-                    .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents for text or regex patterns, delegate 'searchDirectory'.\n")
-                    .append("4. For web workflows, delegate strictly to the 'researcher': to search the web, delegate 'searchWeb'. To load a URL, delegate 'readWebPage'. To analyze a large web page for a specific query without overloading context, delegate 'analyzeWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating web interaction, forward the exact URL, selectors, input text, and steps to the researcher.\n")
-                    .append("5. For research and file persistence workflows: instruct the researcher to write findings to the blackboard using writeToBlackboard with the specified key, and instruct the developer to read that key from the blackboard using readFromBlackboard and write it to disk using writeFile.\n")
-                    .append("6. For long-term semantic memory workflows: to store information or credentials, delegate 'storeFact' to the developer. To search or retrieve information or credentials from memory, delegate 'searchMemory' to developer, and report the retrieved answer back to the user.\n")
-                    .append("7. For Git version control workflows: to review and commit changes, delegate to 'devops' with the instruction: 'Inspect getGitStatus and getGitDiff, formulate a conventional commit message, and execute commitChanges.' Always ensure devops calls the commitChanges tool.\n")
-                    .append("8. For temporary scratchpad and namespaced blackboard workflows: ALWAYS call delegateTask with agentId 'researcher' or 'architect'. Do NOT attempt to call writeTemporaryData or writeToNamespacedBlackboard directly. Instruct the agent to call writeToNamespacedBlackboard(namespace, key, data) or writeTemporaryData(namespace, key, data, ttlSeconds).\n")
-                    .append("9. When asked: 'First, have the architect use writeToNamespacedBlackboard to write the key 'ProjectCodeName' with the value 'Operation Phoenix' into the 'core' namespace. Second, ask the developer what the project code name is WITHOUT telling the developer to read from the blackboard', execute sequentially: 1) delegateTask('architect', 'writeToNamespacedBlackboard key=ProjectCodeName value=Operation Phoenix namespace=core'), 2) delegateTask('developer', 'What is the project code name?'). Never instruct the developer to read from the blackboard.\n")
-                    .append("10. Use 'delegateParallel' to execute independent tasks concurrently to save time. For example, if you need the researcher to look up a topic and the devops engineer to check git status, delegate them in parallel.\n");
-
-            // 10. Instantiate the Swarm Orchestrator
-            WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)
-                    .chatLanguageModel(model)
-                    .chatMemory(MessageWindowChatMemory.withMaxMessages(20))
-                    .tools(delegationFacade)
-                    .systemMessageProvider(chatMemoryId -> managerPrompt.toString())
-                    .build();
-
-            // 11. Prepare fresh dummy.txt with 3 lines of text
-            Path dummyPath = Paths.get("dummy.txt");
-            Files.writeString(dummyPath, "Line 1: Initial System State\nLine 2: Server Port 5000\nLine 3: Java Target Pending\n");
-
-            System.out.println("=======================================================");
-            System.out.println("Swarm Orchestrator CLI Active");
-            System.out.println("Available Sub-Agents: " + swarm.keySet());
-            System.out.println("Type your prompt below. Type 'exit' or 'quit' to terminate.");
-            System.out.println("=======================================================\n");
-
-            // 12. Interactive CLI loop
-            while (true) {
-                System.out.print("User > ");
-                System.out.flush();
-
-                if (!scanner.hasNextLine()) {
-                    System.exit(0);
-                }
-
-                String input = scanner.nextLine().trim();
-                log.info("CLI input received: [{}]", input);
-
-                if (input.isEmpty()) {
-                    continue;
-                }
-
-                if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
-                    System.out.println("Orchestrator > Swarm session terminated. Goodbye!");
-                    System.exit(0);
-                }
-
-                try {
-                    String response = orchestrator.execute(input);
-                    System.out.println("\nOrchestrator > " + (response != null ? response.trim() : ""));
-                    System.out.println();
-                } catch (Exception e) {
-                    log.error("Error executing orchestrator prompt", e);
-                    System.err.println("Orchestrator > Error communicating with swarm: " + e.getMessage());
-                }
-            }
+            // 5. Prepare Environment & Start CLI
+            prepareDummyFiles();
+            runCliLoop(scanner, orchestrator, swarm);
 
         } catch (Exception e) {
             log.error("Fatal error during swarm orchestrator initialization", e);
             System.err.println("ERROR: Could not initialize orchestrator: " + e.getMessage());
             System.exit(1);
+        }
+    }
+
+    private static void registerShutdownHook(WebNavigationService navService, BlackboardService blackboardService, OrchestrationService orchestrationService) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("\n[SYSTEM] Graceful shutdown initiated. Releasing resources...");
+            try {
+                if (navService != null) navService.close();
+                if (blackboardService != null) blackboardService.shutdown();
+                if (orchestrationService != null) orchestrationService.shutdown();
+            } catch (Exception e) {
+                System.err.println("Error during shutdown: " + e.getMessage());
+            }
+            System.out.println("[SYSTEM] Shutdown complete. Goodbye.");
+        }));
+    }
+
+    private static ToolRegistry initializeTools(Scanner scanner, WebNavigationService navService, BlackboardService blackboardService) {
+        SecurityInterceptor security = new SecurityInterceptor(scanner);
+        return new ToolRegistry(
+                new TerminalToolsFacade(security, new CommandExecutorService(), new FileSystemService()),
+                new GitToolsFacade(security, new GitExecutionService()),
+                new WebToolsFacade(security, navService, new WebDistillationService(), new WebSearchService(), new WebAnalysisService()),
+                new MemoryToolsFacade(new LongTermMemoryService()),
+                new ContextToolsFacade(blackboardService),
+                new VisionToolsFacade(security)
+        );
+    }
+
+    private static List<AgentConfig> loadAgentConfigs() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        Path localConfig = Path.of("agents.json");
+        InputStream configStream;
+        
+        if (Files.exists(localConfig)) {
+            System.out.println("[CONFIG] Loading agents manifest from working directory: " + localConfig.toAbsolutePath());
+            configStream = Files.newInputStream(localConfig);
+        } else {
+            System.out.println("[CONFIG] Loading default agents manifest from classpath resources.");
+            configStream = AgentMain.class.getClassLoader().getResourceAsStream("agents.json");
+            if (configStream == null) throw new IllegalStateException("agents.json not found!");
+        }
+        
+        try (configStream) {
+            return mapper.readValue(configStream, new TypeReference<List<AgentConfig>>() {});
+        }
+    }
+
+    private static Map<String, WorkerAgent> spawnSubAgents(List<AgentConfig> configs, SubAgentFactory factory) {
+        Map<String, WorkerAgent> swarm = new HashMap<>();
+        for (AgentConfig config : configs) {
+            log.info("Spawning swarm sub-agent: '{}' [{}]", config.name(), config.id());
+            swarm.put(config.id(), factory.createAgent(config));
+        }
+        return swarm;
+    }
+
+    private static WorkerAgent buildOrchestrator(ChatLanguageModel model, OrchestrationService orchestrationService, List<AgentConfig> configs) {
+        DelegationFacade delegationFacade = new DelegationFacade(orchestrationService);
+        String managerPrompt = OrchestratorPromptBuilder.buildPrompt(configs);
+
+        return AiServices.builder(WorkerAgent.class)
+                .chatLanguageModel(model)
+                .chatMemory(MessageWindowChatMemory.withMaxMessages(20))
+                .tools(delegationFacade)
+                .systemMessageProvider(chatMemoryId -> managerPrompt)
+                .build();
+    }
+
+    private static void prepareDummyFiles() {
+        try {
+            Path dummyPath = Paths.get("dummy.txt");
+            Files.writeString(dummyPath, "Line 1: Initial System State\nLine 2: Server Port 5000\nLine 3: Java Target Pending\n");
+        } catch (Exception e) {
+            log.warn("Could not create dummy.txt", e);
+        }
+    }
+
+    private static void runCliLoop(Scanner scanner, WorkerAgent orchestrator, Map<String, WorkerAgent> swarm) {
+        System.out.println("=======================================================");
+        System.out.println("Swarm Orchestrator CLI Active");
+        System.out.println("Available Sub-Agents: " + swarm.keySet());
+        System.out.println("Type your prompt below. Type 'exit' or 'quit' to terminate.");
+        System.out.println("=======================================================\n");
+
+        while (true) {
+            System.out.print("User > ");
+            System.out.flush();
+
+            if (!scanner.hasNextLine()) {
+                System.exit(0);
+            }
+
+            String input = scanner.nextLine().trim();
+            log.info("CLI input received: [{}]", input);
+
+            if (input.isEmpty()) continue;
+
+            if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
+                System.out.println("Orchestrator > Swarm session terminated. Goodbye!");
+                System.exit(0);
+            }
+
+            try {
+                String response = orchestrator.execute(input);
+                System.out.println("\nOrchestrator > " + (response != null ? response.trim() : ""));
+                System.out.println();
+            } catch (Exception e) {
+                log.error("Error executing orchestrator prompt", e);
+                System.err.println("Orchestrator > Error communicating with swarm: " + e.getMessage());
+            }
         }
     }
 }

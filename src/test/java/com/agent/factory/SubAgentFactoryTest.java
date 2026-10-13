@@ -155,4 +155,20 @@ class SubAgentFactoryTest {
         assertThat(patcherMessages).noneMatch(m -> m.text().contains("System: Research ONLY"));
         assertThat(patcherMessages).noneMatch(m -> m.text().contains("Task for researcher"));
     }
+
+    @Test
+    @DisplayName("Should lookup agent by ID in a case-insensitive manner")
+    void shouldLookupAgentCaseInsensitively() {
+        ChatLanguageModel dummyModel = messages -> Response.from(AiMessage.from("OK"));
+        SubAgentFactory factory = new SubAgentFactory(dummyModel, registry);
+
+        AgentConfig devopsConfig = new AgentConfig("devops", "DevOps Engineer", "Manage git", List.of("git"));
+        WorkerAgent agent = factory.createAgent(devopsConfig);
+
+        assertThat(factory.getAgent("devops")).isSameAs(agent);
+        assertThat(factory.getAgent("DevOps")).isSameAs(agent);
+        assertThat(factory.getAgent("  DEVOPS  ")).isSameAs(agent);
+        assertThat(factory.getAgent(null)).isNull();
+        assertThat(factory.getAgent("   ")).isNull();
+    }
 }

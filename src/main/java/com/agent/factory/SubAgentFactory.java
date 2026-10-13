@@ -60,33 +60,34 @@ public class SubAgentFactory {
                 .systemMessageProvider(chatMemoryId -> config.systemMessage())
                 .build();
 
-        agents.put(config.id(), agent);
+        String normalizedId = config.id().trim().toLowerCase();
+        agents.put(normalizedId, agent);
         return agent;
     }
 
     /**
-     * Retrieves an active WorkerAgent by ID.
+     * Retrieves an active WorkerAgent by ID (case-insensitive and trimmed).
      *
      * @param agentId unique agent identifier
      * @return the WorkerAgent proxy, or null if not found
      */
     public WorkerAgent getAgent(String agentId) {
-        if (agentId == null) {
+        if (agentId == null || agentId.isBlank()) {
             return null;
         }
-        return agents.get(agentId.trim());
+        return agents.get(agentId.trim().toLowerCase());
     }
 
     /**
-     * Registers a custom WorkerAgent instance under the given ID.
+     * Registers a custom WorkerAgent instance under the given ID (case-insensitive and trimmed).
      * Useful for testing and custom proxy registration.
      *
      * @param agentId unique agent identifier
      * @param agent   WorkerAgent instance
      */
     public void registerAgent(String agentId, WorkerAgent agent) {
-        if (agentId != null && agent != null) {
-            agents.put(agentId.trim(), agent);
+        if (agentId != null && !agentId.isBlank() && agent != null) {
+            agents.put(agentId.trim().toLowerCase(), agent);
         }
     }
 }

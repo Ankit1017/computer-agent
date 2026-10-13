@@ -10,6 +10,10 @@ public class WebDistillationService {
     private static final int MAX_MARKDOWN_LENGTH = 15000;
 
     public String distillToMarkdown(String rawHtml) {
+        if (rawHtml == null || rawHtml.isBlank()) {
+            return "Error: HTML content cannot be empty.";
+        }
+
         Document doc = Jsoup.parse(rawHtml);
 
         // 1. Strip noisy elements

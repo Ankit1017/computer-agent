@@ -119,4 +119,12 @@ class BlackboardServiceTest {
         assertThat(dump).doesNotContain("tempKey");
         assertThat(dump).contains("- permKey: permValue");
     }
+
+    @Test
+    @DisplayName("Should handle very large TTL without arithmetic overflow")
+    void shouldHandleVeryLargeTtlWithoutOverflow() {
+        service.writeData("global", "longTtlKey", "value", Long.MAX_VALUE);
+        String result = service.readData("global", "longTtlKey");
+        assertThat(result).isEqualTo("value");
+    }
 }

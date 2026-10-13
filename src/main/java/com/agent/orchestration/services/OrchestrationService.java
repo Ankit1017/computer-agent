@@ -8,8 +8,10 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
-public class OrchestrationService {
+public class OrchestrationService implements AutoCloseable {
     private final SubAgentFactory agentFactory;
     private final BlackboardService blackboardService;
     
@@ -29,6 +31,13 @@ public class OrchestrationService {
     public String routeParallelTasks(String agentId1, String task1, String agentId2, String task2) {
         System.out.println("[ORCHESTRATOR] Routing PARALLEL tasks to '" + agentId1 + "' and '" + agentId2 + "'");
 
+        if (agentId1 == null || agentId1.isBlank() || task1 == null || task1.isBlank()) {
+            return "Error: Invalid arguments for agent 1 in parallel routing.";
+        }
+        if (agentId2 == null || agentId2.isBlank() || task2 == null || task2.isBlank()) {
+            return "Error: Invalid arguments for agent 2 in parallel routing.";
+        }
+
         CompletableFuture<String> future1 = CompletableFuture.supplyAsync(() -> 
             "=== Response from " + agentId1 + " ===\n" + executeWithRetry(agentId1, task1, 1), vThreadExecutor);
             
@@ -36,19 +45,32 @@ public class OrchestrationService {
             "=== Response from " + agentId2 + " ===\n" + executeWithRetry(agentId2, task2, 1), vThreadExecutor);
 
         try {
-            // Wait for both virtual threads to complete
-            CompletableFuture.allOf(future1, future2).join();
+            // Wait for both virtual threads to complete with a 120s timeout safeguard
+            CompletableFuture.allOf(future1, future2).get(120, TimeUnit.SECONDS);
             return future1.get() + "\n\n" + future2.get();
+        } catch (TimeoutException te) {
+            future1.cancel(true);
+            future2.cancel(true);
+            return "Parallel execution timed out after 120 seconds.";
         } catch (Exception e) {
             return "Parallel execution encountered a critical error: " + e.getMessage();
         }
     }
 
     private String executeWithRetry(String agentId, String task, int maxAttempts) {
+        if (agentId == null || agentId.isBlank()) {
+            return "Error: Agent ID cannot be empty.";
+        }
+        if (task == null || task.isBlank()) {
+            return "Error: Task description cannot be empty.";
+        }
+
+        String normalizedAgentId = agentId.trim().toLowerCase();
         int attempt = 1;
+
         while (attempt <= maxAttempts) {
             try {
-                WorkerAgent agent = agentFactory.getAgent(agentId);
+                WorkerAgent agent = agentFactory.getAgent(normalizedAgentId);
                 if (agent == null) {
                     throw new IllegalArgumentException("Unknown agent ID '" + agentId + "'");
                 }
@@ -76,5 +98,23 @@ public class OrchestrationService {
             }
         }
         return "AGENT EXECUTION FAILED.";
+    }
+
+    @Override
+    public void close() {
+        shutdown();
+    }
+
+    public void shutdown() {
+        System.out.println("[ORCHESTRATOR] Shutting down VirtualThread executor...");
+        vThreadExecutor.shutdown();
+        try {
+            if (!vThreadExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
+                vThreadExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            vThreadExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

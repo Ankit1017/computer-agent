@@ -15,8 +15,14 @@ public class BlackboardService {
         final long expiryTimeMillis;
 
         BlackboardEntry(String value, long ttlSeconds) {
-            this.value = value;
-            this.expiryTimeMillis = ttlSeconds > 0 ? System.currentTimeMillis() + (ttlSeconds * 1000) : 0;
+            this.value = (value != null) ? value : "";
+            if (ttlSeconds > 0) {
+                // Prevent long arithmetic overflow by capping at 10 years (315,360,000 seconds)
+                long safeTtl = Math.min(ttlSeconds, 315_360_000L);
+                this.expiryTimeMillis = System.currentTimeMillis() + (safeTtl * 1000L);
+            } else {
+                this.expiryTimeMillis = 0;
+            }
         }
 
         boolean isExpired() {
@@ -25,7 +31,13 @@ public class BlackboardService {
     }
 
     private final Map<String, Map<String, BlackboardEntry>> namespaces = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
+    
+    // Use a daemon thread so the cleanup task never blocks JVM shutdown
+    private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "blackboard-ttl-cleanup");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     public BlackboardService() {
         // Pre-initialize standard enterprise namespaces
@@ -70,7 +82,7 @@ public class BlackboardService {
             space.remove(trimmedKey);
             return "Error: Key '" + trimmedKey + "' has expired and was removed.";
         }
-        return entry.value;
+        return entry.value != null ? entry.value : "";
     }
 
     public String listKeys(String namespace) {
@@ -81,7 +93,7 @@ public class BlackboardService {
         }
         
         Set<String> activeKeys = space.entrySet().stream()
-            .filter(e -> !e.getValue().isExpired())
+            .filter(e -> e.getValue() != null && !e.getValue().isExpired())
             .map(Map.Entry::getKey)
             .collect(Collectors.toSet());
             
@@ -113,7 +125,7 @@ public class BlackboardService {
     }
 
     private void cleanupExpiredEntries() {
-        namespaces.values().forEach(space -> space.entrySet().removeIf(e -> e.getValue().isExpired()));
+        namespaces.values().forEach(space -> space.entrySet().removeIf(e -> e.getValue() == null || e.getValue().isExpired()));
     }
 
     public void shutdown() {

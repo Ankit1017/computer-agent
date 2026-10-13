@@ -33,13 +33,18 @@ public class WebNavigationService implements AutoCloseable {
     }
 
     public String fetchRawHtml(String urlString) {
-        if (!urlString.startsWith("http")) {
-            urlString = "https://" + urlString;
+        if (urlString == null || urlString.isBlank()) {
+            throw new IllegalArgumentException("URL cannot be null or blank.");
+        }
+
+        String targetUrl = urlString.trim();
+        if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+            targetUrl = "https://" + targetUrl;
         }
 
         try {
             try {
-                activePage.navigate(urlString, new Page.NavigateOptions()
+                activePage.navigate(targetUrl, new Page.NavigateOptions()
                         .setTimeout(15000)
                         .setWaitUntil(WaitUntilState.NETWORKIDLE));
             } catch (TimeoutError te) {
@@ -56,8 +61,14 @@ public class WebNavigationService implements AutoCloseable {
     }
 
     public String clickElement(String cssSelector) {
+        if (cssSelector == null || cssSelector.isBlank()) {
+            return "Error: CSS selector cannot be blank.";
+        }
+        if (activePage == null) {
+            return "Error: Headless browser page is not initialized.";
+        }
         try {
-            activePage.locator(cssSelector).first().click(new com.microsoft.playwright.Locator.ClickOptions().setTimeout(5000));
+            activePage.locator(cssSelector.trim()).first().click(new com.microsoft.playwright.Locator.ClickOptions().setTimeout(5000));
             // Wait briefly for any JS transitions
             activePage.waitForTimeout(1000); 
             return "Successfully clicked element matching selector: " + cssSelector;
@@ -67,8 +78,15 @@ public class WebNavigationService implements AutoCloseable {
     }
 
     public String fillInput(String cssSelector, String text) {
+        if (cssSelector == null || cssSelector.isBlank()) {
+            return "Error: CSS selector cannot be blank.";
+        }
+        if (activePage == null) {
+            return "Error: Headless browser page is not initialized.";
+        }
+        String safeText = (text != null) ? text : "";
         try {
-            activePage.locator(cssSelector).first().fill(text, new com.microsoft.playwright.Locator.FillOptions().setTimeout(5000));
+            activePage.locator(cssSelector.trim()).first().fill(safeText, new com.microsoft.playwright.Locator.FillOptions().setTimeout(5000));
             return "Successfully filled text into selector: " + cssSelector;
         } catch (Exception e) {
             return "Error filling input: " + e.getMessage();
