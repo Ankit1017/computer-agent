@@ -28,14 +28,20 @@ public class GitToolsFacade {
 
     @Tool("Stage all modified files and commit them to the repository.")
     public String commitChanges(@P("The commit message summarizing the changes") String commitMessage) {
-        if (!security.requestPermission("commit git changes", "Message: '" + commitMessage + "'")) {
+        String msg = (commitMessage != null && !commitMessage.isBlank()) ? commitMessage.trim() : "chore: update project files";
+        if (!security.requestPermission("commit git changes", "Message: '" + msg + "'")) {
             return "ACTION REJECTED: User explicitly denied the git commit. Do not retry this action.";
         }
         
         try {
-            return gitService.commitChanges(commitMessage);
+            return gitService.commitChanges(msg);
         } catch (Exception e) {
             return "Error committing changes: " + e.getMessage();
         }
+    }
+
+    @Tool("Stage all modified files and commit them with an automated conventional commit message.")
+    public String commitChanges() {
+        return commitChanges("feat: update codebase structural changes");
     }
 }

@@ -160,7 +160,8 @@ public class AgentMain {
                     .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents for text or regex patterns, delegate 'searchDirectory'.\n")
                     .append("4. For web workflows, delegate strictly to the 'researcher': to search the web, delegate 'searchWeb'. To load a URL, delegate 'readWebPage'. To analyze a large web page for a specific query without overloading context, delegate 'analyzeWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating web interaction, forward the exact URL, selectors, input text, and steps to the researcher.\n")
                     .append("5. For research and file persistence workflows: instruct the researcher to write findings to the blackboard using writeToBlackboard with the specified key, and instruct the developer to read that key from the blackboard using readFromBlackboard and write it to disk using writeFile.\n")
-                    .append("6. For long-term semantic memory workflows: to store information or credentials, delegate 'storeFact' to the developer. To search or retrieve information or credentials from memory, delegate 'searchMemory' to devops, and report the retrieved answer back to the user.\n");
+                    .append("6. For long-term semantic memory workflows: to store information or credentials, delegate 'storeFact' to the developer. To search or retrieve information or credentials from memory, delegate 'searchMemory' to developer, and report the retrieved answer back to the user.\n")
+                    .append("7. For Git version control workflows: to review and commit changes, delegate to 'devops' with the instruction: 'Inspect getGitStatus and getGitDiff, formulate a conventional commit message, and execute commitChanges.' Always ensure devops calls the commitChanges tool.\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)
@@ -199,10 +200,6 @@ public class AgentMain {
                 if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
                     System.out.println("Orchestrator > Swarm session terminated. Goodbye!");
                     System.exit(0);
-                }
-
-                if ("y".equalsIgnoreCase(input) || "yes".equalsIgnoreCase(input) || "n".equalsIgnoreCase(input) || "no".equalsIgnoreCase(input)) {
-                    continue;
                 }
 
                 try {
