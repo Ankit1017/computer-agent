@@ -88,4 +88,35 @@ class BlackboardServiceTest {
         String expiredResult = service.readData("scratchpad", "tempToken");
         assertThat(expiredResult).contains("has expired and was removed");
     }
+
+    @Test
+    @DisplayName("Should dump active keys and values in namespace as formatted string")
+    void shouldDumpNamespaceWithActiveKeys() {
+        service.writeData("core", "ProjectCodeName", "Operation Phoenix");
+        service.writeData("core", "TargetPort", "8080");
+
+        String dump = service.dumpNamespace("core");
+        assertThat(dump).contains("- ProjectCodeName: Operation Phoenix");
+        assertThat(dump).contains("- TargetPort: 8080");
+    }
+
+    @Test
+    @DisplayName("Should return empty string when namespace is empty or nonexistent")
+    void shouldReturnEmptyStringWhenNamespaceEmpty() {
+        assertThat(service.dumpNamespace("nonexistent")).isEmpty();
+        assertThat(service.dumpNamespace(null)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should omit expired keys from dumpNamespace")
+    void shouldOmitExpiredKeysFromDumpNamespace() throws InterruptedException {
+        service.writeData("core", "tempKey", "tempValue", 1);
+        service.writeData("core", "permKey", "permValue", 0);
+
+        Thread.sleep(1200);
+
+        String dump = service.dumpNamespace("core");
+        assertThat(dump).doesNotContain("tempKey");
+        assertThat(dump).contains("- permKey: permValue");
+    }
 }

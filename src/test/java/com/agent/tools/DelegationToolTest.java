@@ -127,4 +127,80 @@ class DelegationToolTest {
                 .contains("[Response from known_agent]: OK: task 1")
                 .contains("[Response from ghost_agent]: Error - Unknown agent ID.");
     }
+
+    @Test
+    @DisplayName("Should auto-inject core context block when core namespace contains active data")
+    void shouldAutoInjectCoreContextIntoSubAgentPrompt() {
+        com.agent.tools.context.services.BlackboardService blackboard = new com.agent.tools.context.services.BlackboardService();
+        try {
+            blackboard.writeData("core", "ProjectCodeName", "Operation Phoenix");
+
+            java.util.concurrent.atomic.AtomicReference<String> promptReceived = new java.util.concurrent.atomic.AtomicReference<>();
+            Map<String, WorkerAgent> swarm = Map.of("developer", task -> {
+                promptReceived.set(task);
+                return "Acknowledged";
+            });
+
+            DelegationTool tool = new DelegationTool(swarm, blackboard);
+            String result = tool.delegateTask("developer", "What is the project code name?");
+
+            assertThat(result).isEqualTo("Acknowledged");
+            assertThat(promptReceived.get())
+                    .contains("[[ SYSTEM CORE MEMORY (DO NOT IGNORE) ]]")
+                    .contains("- ProjectCodeName: Operation Phoenix")
+                    .contains("YOUR TASK:\nWhat is the project code name?");
+        } finally {
+            blackboard.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("Should not alter prompt when core namespace is empty")
+    void shouldNotAlterPromptWhenCoreNamespaceIsEmpty() {
+        com.agent.tools.context.services.BlackboardService blackboard = new com.agent.tools.context.services.BlackboardService();
+        try {
+            java.util.concurrent.atomic.AtomicReference<String> promptReceived = new java.util.concurrent.atomic.AtomicReference<>();
+            Map<String, WorkerAgent> swarm = Map.of("developer", task -> {
+                promptReceived.set(task);
+                return "Done";
+            });
+
+            DelegationTool tool = new DelegationTool(swarm, blackboard);
+            tool.delegateTask("developer", "Run tests");
+
+            assertThat(promptReceived.get()).isEqualTo("Run tests");
+        } finally {
+            blackboard.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("Should auto-inject core context in parallel delegation")
+    void shouldAutoInjectCoreContextInParallelDelegation() {
+        com.agent.tools.context.services.BlackboardService blackboard = new com.agent.tools.context.services.BlackboardService();
+        try {
+            blackboard.writeData("core", "Status", "DeploymentReady");
+
+            java.util.List<String> promptsReceived = new java.util.concurrent.CopyOnWriteArrayList<>();
+            Map<String, WorkerAgent> swarm = Map.of(
+                    "worker1", task -> { promptsReceived.add(task); return "W1 done"; },
+                    "worker2", task -> { promptsReceived.add(task); return "W2 done"; }
+            );
+
+            DelegationTool tool = new DelegationTool(swarm, blackboard);
+            tool.delegateParallel(
+                    java.util.List.of("worker1", "worker2"),
+                    java.util.List.of("Task 1", "Task 2")
+            );
+
+            assertThat(promptsReceived).hasSize(2);
+            for (String p : promptsReceived) {
+                assertThat(p)
+                        .contains("[[ SYSTEM CORE MEMORY (DO NOT IGNORE) ]]")
+                        .contains("- Status: DeploymentReady");
+            }
+        } finally {
+            blackboard.shutdown();
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package com.agent.tools;
 
 import com.agent.WorkerAgent;
+import com.agent.tools.context.services.BlackboardService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
@@ -17,14 +18,26 @@ public class DelegationTool {
     private static final Logger log = LoggerFactory.getLogger(DelegationTool.class);
 
     private final Map<String, WorkerAgent> swarm;
+    private final BlackboardService blackboardService;
 
     /**
-     * Initializes the delegation tool with a map of active sub-agents.
+     * Initializes the delegation tool with a map of active sub-agents and blackboard service.
+     *
+     * @param swarm             mapping of agent IDs to their WorkerAgent proxy instances
+     * @param blackboardService context blackboard service for core state injection
+     */
+    public DelegationTool(Map<String, WorkerAgent> swarm, BlackboardService blackboardService) {
+        this.swarm = Objects.requireNonNull(swarm, "swarm must not be null");
+        this.blackboardService = Objects.requireNonNull(blackboardService, "blackboardService must not be null");
+    }
+
+    /**
+     * Initializes the delegation tool with a map of active sub-agents and a default blackboard service.
      *
      * @param swarm mapping of agent IDs to their WorkerAgent proxy instances
      */
     public DelegationTool(Map<String, WorkerAgent> swarm) {
-        this.swarm = Objects.requireNonNull(swarm, "swarm must not be null");
+        this(swarm, new BlackboardService());
     }
 
     /**
@@ -59,7 +72,18 @@ public class DelegationTool {
         System.out.flush();
 
         try {
-            String result = agent.execute(task);
+            // Auto-inject core memory
+            String coreContext = blackboardService.dumpNamespace("core");
+            String finalPrompt = task;
+
+            if (!coreContext.isEmpty()) {
+                finalPrompt = "[[ SYSTEM CORE MEMORY (DO NOT IGNORE) ]]\n" +
+                              coreContext +
+                              "\n====================================\n\n" +
+                              "YOUR TASK:\n" + task;
+            }
+
+            String result = agent.execute(finalPrompt);
             log.info("Agent '{}' completed task. Response length: {}", targetId, result != null ? result.length() : 0);
             if (result == null || result.isBlank()) {
                 return "[Agent '" + targetId + "' completed task with no text output]";
@@ -107,7 +131,17 @@ public class DelegationTool {
                     callables.add(() -> {
                         System.out.println("\n[ORCHESTRATOR-PARALLEL] Dispatching to '" + agentId + "': " + task);
                         System.out.flush();
-                        return "[Response from " + agentId + "]: " + agent.execute(task);
+
+                        String coreContext = blackboardService.dumpNamespace("core");
+                        String finalPrompt = task;
+                        if (!coreContext.isEmpty()) {
+                            finalPrompt = "[[ SYSTEM CORE MEMORY (DO NOT IGNORE) ]]\n" +
+                                          coreContext +
+                                          "\n====================================\n\n" +
+                                          "YOUR TASK:\n" + task;
+                        }
+
+                        return "[Response from " + agentId + "]: " + agent.execute(finalPrompt);
                     });
                 }
             }

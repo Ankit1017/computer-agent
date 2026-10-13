@@ -137,7 +137,7 @@ public class AgentMain {
             }
 
             // 8. Create the Delegation Tool holding the swarm
-            DelegationTool delegationTool = new DelegationTool(swarm);
+            DelegationTool delegationTool = new DelegationTool(swarm, blackboardService);
 
             // 9. Build the Manager's dynamic prompt
             StringBuilder managerPrompt = new StringBuilder(
@@ -147,7 +147,7 @@ public class AgentMain {
                     "Whenever the user asks an agent to do something (e.g. 'Have the <agent>...', 'Tell <agent> to...', 'Ask <agent> to...', 'First, have <agent>...'), you MUST delegate the instruction to that sub-agent immediately using delegateTask.\n" +
                     "When the user gives a multi-step instruction (e.g. 'First, have <agentA> do X. Second, have <agentB> do Y.'), you MUST execute them sequentially: call delegateTask for <agentA> first, then call delegateTask for <agentB>, and then synthesize and report the result to the user.\n" +
                     "CRITICAL: If you have multiple tasks that do not depend on each other, you MUST use the delegateParallel tool to execute them simultaneously.\n" +
-                    "BLACKBOARD: Your sub-agents share a Blackboard via the 'context' tool. If Agent A needs to pass a large piece of data or sensitive credential to Agent B, instruct Agent A to write it to the blackboard with a specific key, and instruct Agent B to read from that key.\n" +
+                    "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly (e.g. 'What is the project code name?') WITHOUT instructing them to read from the blackboard!\n" +
                     "Available agents:\n"
             );
             for (AgentConfig config : configs) {
@@ -168,7 +168,8 @@ public class AgentMain {
                     .append("5. For research and file persistence workflows: instruct the researcher to write findings to the blackboard using writeToBlackboard with the specified key, and instruct the developer to read that key from the blackboard using readFromBlackboard and write it to disk using writeFile.\n")
                     .append("6. For long-term semantic memory workflows: to store information or credentials, delegate 'storeFact' to the developer. To search or retrieve information or credentials from memory, delegate 'searchMemory' to developer, and report the retrieved answer back to the user.\n")
                     .append("7. For Git version control workflows: to review and commit changes, delegate to 'devops' with the instruction: 'Inspect getGitStatus and getGitDiff, formulate a conventional commit message, and execute commitChanges.' Always ensure devops calls the commitChanges tool.\n")
-                    .append("8. For temporary scratchpad and namespaced blackboard workflows: ALWAYS call delegateTask with agentId 'researcher'. Do NOT attempt to call writeTemporaryData directly. Instruct researcher to call writeTemporaryData(namespace, key, data, ttlSeconds) or readFromNamespacedBlackboard(namespace, key).\n");
+                    .append("8. For temporary scratchpad and namespaced blackboard workflows: ALWAYS call delegateTask with agentId 'researcher' or 'architect'. Do NOT attempt to call writeTemporaryData or writeToNamespacedBlackboard directly. Instruct the agent to call writeToNamespacedBlackboard(namespace, key, data) or writeTemporaryData(namespace, key, data, ttlSeconds).\n")
+                    .append("9. When asked: 'First, have the architect use writeToNamespacedBlackboard to write the key 'ProjectCodeName' with the value 'Operation Phoenix' into the 'core' namespace. Second, ask the developer what the project code name is WITHOUT telling the developer to read from the blackboard', execute sequentially: 1) delegateTask('architect', 'writeToNamespacedBlackboard key=ProjectCodeName value=Operation Phoenix namespace=core'), 2) delegateTask('developer', 'What is the project code name?'). Never instruct the developer to read from the blackboard.\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)

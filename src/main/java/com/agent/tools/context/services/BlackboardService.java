@@ -91,6 +91,27 @@ public class BlackboardService {
         return "Active keys in '" + ns + "': " + activeKeys;
     }
 
+    /**
+     * Dumps all active key-value pairs in a namespace as a formatted string.
+     * Returns an empty string if the namespace is empty or doesn't exist.
+     */
+    public String dumpNamespace(String namespace) {
+        String ns = (namespace == null || namespace.isBlank()) ? "global" : namespace.trim().toLowerCase();
+        Map<String, BlackboardEntry> space = namespaces.get(ns);
+        if (space == null || space.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        space.forEach((key, entry) -> {
+            if (entry != null && !entry.isExpired()) {
+                sb.append("- ").append(key).append(": ").append(entry.value).append("\n");
+            }
+        });
+
+        return sb.toString().trim();
+    }
+
     private void cleanupExpiredEntries() {
         namespaces.values().forEach(space -> space.entrySet().removeIf(e -> e.getValue().isExpired()));
     }
