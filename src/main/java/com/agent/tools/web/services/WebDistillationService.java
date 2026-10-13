@@ -30,6 +30,9 @@ public class WebDistillationService {
         convertToMarkdown(mainContent, markdown);
 
         String finalMarkdown = markdown.toString().trim();
+        if (finalMarkdown.isBlank()) {
+            return "No readable content found on this page.";
+        }
         
         // 4. Enforce Token/Context limit
         if (finalMarkdown.length() > MAX_MARKDOWN_LENGTH) {

@@ -148,7 +148,8 @@ public class AgentMain {
                     .append("GOAL ADHERENCE & ANTI-LOOPING:\n")
                     .append("1. Never repeat the exact same delegation if it failed, returned no useful data, OR if the user denied permission via a security interceptor. If an action is denied, inform the user and ask how they want to proceed.\n")
                     .append("2. If a sub-agent returns a massive chunk of irrelevant data, ignore the irrelevant parts and stick strictly to your original goal.\n")
-                    .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents for text or regex patterns, delegate 'searchDirectory'.\n");
+                    .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents for text or regex patterns, delegate 'searchDirectory'.\n")
+                    .append("4. For web workflows delegated to the architect: to load a URL, delegate 'readWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating multi-step web interaction, forward the exact URL, selectors, input text, and steps to the architect.\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)

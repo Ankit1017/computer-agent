@@ -11,6 +11,9 @@ import java.nio.charset.StandardCharsets;
 public class WebSearchService {
 
     public String search(String query) {
+        if (query == null || query.isBlank()) {
+            return "Error: Search query cannot be null or blank.";
+        }
         try {
             String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
             // Use DuckDuckGo's HTML fallback for easy scraping without API keys

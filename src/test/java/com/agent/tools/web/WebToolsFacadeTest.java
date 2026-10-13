@@ -85,4 +85,71 @@ class WebToolsFacadeTest {
         assertThat(result).isEqualTo(mockResults);
         verify(mockSearchService, times(1)).search(query);
     }
+
+    @Test
+    @DisplayName("Should execute clickWebElement when approved by HITL security")
+    void shouldClickWebElementWhenApproved() {
+        String selector = "button#submit";
+        when(mockSecurity.requestPermission(anyString(), eq(selector))).thenReturn(true);
+        when(mockNavService.clickElement(selector)).thenReturn("Successfully clicked element matching selector: button#submit");
+
+        String result = facade.clickWebElement(selector);
+
+        assertThat(result).contains("Successfully clicked");
+        verify(mockNavService, times(1)).clickElement(selector);
+    }
+
+    @Test
+    @DisplayName("Should reject clickWebElement when denied by HITL security")
+    void shouldRejectClickWebElementWhenDenied() {
+        String selector = "button#submit";
+        when(mockSecurity.requestPermission(anyString(), eq(selector))).thenReturn(false);
+
+        String result = facade.clickWebElement(selector);
+
+        assertThat(result).contains("ACTION REJECTED");
+        verify(mockNavService, never()).clickElement(anyString());
+    }
+
+    @Test
+    @DisplayName("Should execute fillWebInput when approved by HITL security")
+    void shouldFillWebInputWhenApproved() {
+        String selector = "input[name=search]";
+        String text = "Java";
+        when(mockSecurity.requestPermission(anyString(), contains(selector))).thenReturn(true);
+        when(mockNavService.fillInput(selector, text)).thenReturn("Successfully filled text into selector: input[name=search]");
+
+        String result = facade.fillWebInput(selector, text);
+
+        assertThat(result).contains("Successfully filled");
+        verify(mockNavService, times(1)).fillInput(selector, text);
+    }
+
+    @Test
+    @DisplayName("Should reject fillWebInput when denied by HITL security")
+    void shouldRejectFillWebInputWhenDenied() {
+        String selector = "input[name=search]";
+        String text = "Java";
+        when(mockSecurity.requestPermission(anyString(), contains(selector))).thenReturn(false);
+
+        String result = facade.fillWebInput(selector, text);
+
+        assertThat(result).contains("ACTION REJECTED");
+        verify(mockNavService, never()).fillInput(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("Should read current active web page DOM without navigation")
+    void shouldReadCurrentWebPage() {
+        String rawHtml = "<html><body><h1>Current State</h1></body></html>";
+        String distilled = "# Current State";
+        when(mockNavService.getCurrentHtml()).thenReturn(rawHtml);
+        when(mockDistService.distillToMarkdown(rawHtml)).thenReturn(distilled);
+
+        String result = facade.readCurrentWebPage();
+
+        assertThat(result).isEqualTo(distilled);
+        verify(mockNavService, times(1)).getCurrentHtml();
+        verify(mockDistService, times(1)).distillToMarkdown(rawHtml);
+    }
 }
