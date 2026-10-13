@@ -14,6 +14,7 @@ import com.agent.tools.terminal.services.CommandExecutorService;
 import com.agent.tools.terminal.services.FileSystemService;
 import com.agent.tools.vision.VisionToolsFacade;
 import com.agent.tools.web.WebToolsFacade;
+import com.agent.tools.web.services.WebAnalysisService;
 import com.agent.tools.web.services.WebDistillationService;
 import com.agent.tools.web.services.WebNavigationService;
 import com.agent.tools.web.services.WebSearchService;
@@ -87,7 +88,8 @@ public class AgentMain {
             GitTools gitTools = new GitTools(scanner);
             WebDistillationService webDistService = new WebDistillationService();
             WebSearchService webSearchService = new WebSearchService();
-            WebToolsFacade webTools = new WebToolsFacade(security, navService, webDistService, webSearchService);
+            WebAnalysisService webAnalysisService = new WebAnalysisService();
+            WebToolsFacade webTools = new WebToolsFacade(security, navService, webDistService, webSearchService, webAnalysisService);
             MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);
             ContextTools contextTools = new ContextTools();
             VisionToolsFacade visionTools = new VisionToolsFacade(security);
@@ -149,7 +151,7 @@ public class AgentMain {
                     .append("1. Never repeat the exact same delegation if it failed, returned no useful data, OR if the user denied permission via a security interceptor. If an action is denied, inform the user and ask how they want to proceed.\n")
                     .append("2. If a sub-agent returns a massive chunk of irrelevant data, ignore the irrelevant parts and stick strictly to your original goal.\n")
                     .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents for text or regex patterns, delegate 'searchDirectory'.\n")
-                    .append("4. For web workflows delegated to the architect: to load a URL, delegate 'readWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating multi-step web interaction, forward the exact URL, selectors, input text, and steps to the architect.\n");
+                    .append("4. For web workflows delegated to the architect: to load a URL, delegate 'readWebPage'. To analyze a large web page for a specific query without overloading context, delegate 'analyzeWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating multi-step web interaction, forward the exact URL, selectors, input text, and steps to the architect.\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)

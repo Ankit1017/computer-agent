@@ -1,6 +1,7 @@
 package com.agent.tools.web;
 
 import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.web.services.WebAnalysisService;
 import com.agent.tools.web.services.WebDistillationService;
 import com.agent.tools.web.services.WebNavigationService;
 import com.agent.tools.web.services.WebSearchService;
@@ -12,16 +13,22 @@ public class WebToolsFacade {
     private final WebNavigationService navigationService;
     private final WebDistillationService distillationService;
     private final WebSearchService searchService;
+    private final WebAnalysisService analysisService;
 
     public WebToolsFacade(SecurityInterceptor security, WebNavigationService navService, WebDistillationService distService) {
-        this(security, navService, distService, new WebSearchService());
+        this(security, navService, distService, new WebSearchService(), new WebAnalysisService());
     }
 
     public WebToolsFacade(SecurityInterceptor security, WebNavigationService navService, WebDistillationService distService, WebSearchService searchService) {
+        this(security, navService, distService, searchService, new WebAnalysisService());
+    }
+
+    public WebToolsFacade(SecurityInterceptor security, WebNavigationService navService, WebDistillationService distService, WebSearchService searchService, WebAnalysisService analysisService) {
         this.security = security;
         this.navigationService = navService;
         this.distillationService = distService;
         this.searchService = searchService;
+        this.analysisService = analysisService;
     }
 
     @Tool("Fetch a webpage and extract its core content as clean Markdown. Automatically strips ads and navigation menus.")
@@ -91,6 +98,30 @@ public class WebToolsFacade {
             return (markdown != null && !markdown.isBlank()) ? markdown : "No readable content found on the currently active web page.";
         } catch (Exception e) {
             return "Error reading current webpage: " + e.getMessage();
+        }
+    }
+
+    @Tool("Analyze a web page by fetching, distilling, and performing on-the-fly RAG semantic search to answer a specific query without overloading context.")
+    public String analyzeWebPage(
+            @P("The full URL of the webpage to analyze") String url,
+            @P("The query or question to answer using the page content") String query) {
+        if (url == null || url.isBlank()) {
+            return "Error: URL cannot be blank.";
+        }
+        if (query == null || query.isBlank()) {
+            return "Error: Query cannot be blank.";
+        }
+        System.out.println("[WEB] Agent analyzing URL: " + url + " for query: " + query);
+        try {
+            String rawHtml = navigationService.fetchRawHtml(url);
+            String markdown = distillationService.distillToMarkdown(rawHtml);
+            if (markdown == null || markdown.isBlank()) {
+                return "No readable content found on page to analyze: " + url;
+            }
+            String analysis = analysisService.analyzeContent(markdown, query);
+            return (analysis != null && !analysis.isBlank()) ? analysis : "Analysis returned no results for query: " + query;
+        } catch (Exception e) {
+            return "Error analyzing webpage: " + e.getMessage();
         }
     }
 }

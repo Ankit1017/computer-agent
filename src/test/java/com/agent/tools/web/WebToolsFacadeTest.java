@@ -1,6 +1,7 @@
 package com.agent.tools.web;
 
 import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.web.services.WebAnalysisService;
 import com.agent.tools.web.services.WebDistillationService;
 import com.agent.tools.web.services.WebNavigationService;
 import com.agent.tools.web.services.WebSearchService;
@@ -17,6 +18,7 @@ class WebToolsFacadeTest {
     private WebNavigationService mockNavService;
     private WebDistillationService mockDistService;
     private WebSearchService mockSearchService;
+    private WebAnalysisService mockAnalysisService;
     private WebToolsFacade facade;
 
     @BeforeEach
@@ -25,7 +27,8 @@ class WebToolsFacadeTest {
         mockNavService = mock(WebNavigationService.class);
         mockDistService = mock(WebDistillationService.class);
         mockSearchService = mock(WebSearchService.class);
-        facade = new WebToolsFacade(mockSecurity, mockNavService, mockDistService, mockSearchService);
+        mockAnalysisService = mock(WebAnalysisService.class);
+        facade = new WebToolsFacade(mockSecurity, mockNavService, mockDistService, mockSearchService, mockAnalysisService);
     }
 
     @Test
@@ -151,5 +154,46 @@ class WebToolsFacadeTest {
         assertThat(result).isEqualTo(distilled);
         verify(mockNavService, times(1)).getCurrentHtml();
         verify(mockDistService, times(1)).distillToMarkdown(rawHtml);
+    }
+
+    @Test
+    @DisplayName("Should successfully analyze webpage by fetching, distilling, and performing semantic search")
+    void shouldAnalyzeWebPageSuccessfully() throws Exception {
+        String testUrl = "https://example.com/java";
+        String query = "what year was java released?";
+        String rawHtml = "<html><body><p>Java released in 1995</p></body></html>";
+        String markdown = "Java released in 1995";
+        String expectedAnalysis = "Relevant excerpts found for query 'what year was java released?':\n--- Excerpt 1 ---\nJava released in 1995";
+
+        when(mockNavService.fetchRawHtml(testUrl)).thenReturn(rawHtml);
+        when(mockDistService.distillToMarkdown(rawHtml)).thenReturn(markdown);
+        when(mockAnalysisService.analyzeContent(markdown, query)).thenReturn(expectedAnalysis);
+
+        String result = facade.analyzeWebPage(testUrl, query);
+
+        assertThat(result).isEqualTo(expectedAnalysis);
+        verify(mockNavService, times(1)).fetchRawHtml(testUrl);
+        verify(mockDistService, times(1)).distillToMarkdown(rawHtml);
+        verify(mockAnalysisService, times(1)).analyzeContent(markdown, query);
+    }
+
+    @Test
+    @DisplayName("Should return error message when analyzeWebPage URL or query is blank")
+    void shouldValidateAnalyzeWebPageInputs() {
+        assertThat(facade.analyzeWebPage("", "query")).isEqualTo("Error: URL cannot be blank.");
+        assertThat(facade.analyzeWebPage(null, "query")).isEqualTo("Error: URL cannot be blank.");
+        assertThat(facade.analyzeWebPage("https://example.com", "")).isEqualTo("Error: Query cannot be blank.");
+        assertThat(facade.analyzeWebPage("https://example.com", null)).isEqualTo("Error: Query cannot be blank.");
+    }
+
+    @Test
+    @DisplayName("Should handle exceptions during analyzeWebPage gracefully")
+    void shouldHandleAnalyzeWebPageExceptions() throws Exception {
+        String testUrl = "https://example.com/fail";
+        when(mockNavService.fetchRawHtml(testUrl)).thenThrow(new RuntimeException("Network down"));
+
+        String result = facade.analyzeWebPage(testUrl, "query");
+
+        assertThat(result).isEqualTo("Error analyzing webpage: Network down");
     }
 }
