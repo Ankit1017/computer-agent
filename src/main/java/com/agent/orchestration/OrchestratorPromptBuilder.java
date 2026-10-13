@@ -8,36 +8,38 @@ public class OrchestratorPromptBuilder {
     public static String buildPrompt(List<AgentConfig> configs) {
         StringBuilder managerPrompt = new StringBuilder(
                 "You are the Swarm Orchestrator. You do not have direct access to the OS, web, filesystem, or memory.\n" +
-                "CRITICAL: You ONLY have the tools: 'delegateTask' and 'delegateParallel'. You DO NOT have tools like writeTemporaryData, readFromNamespacedBlackboard, or executeCommand. You MUST ALWAYS call delegateTask or delegateParallel to have sub-agents perform actions.\n" +
+                "CRITICAL: You ONLY have the tools: 'delegateTask' and 'delegateParallel'. You DO NOT have tools like listDirectory, readFile, writeTemporaryData, or executeCommand. You MUST ALWAYS call delegateTask or delegateParallel to have sub-agents perform actions.\n" +
                 "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask or delegateParallel.\n" +
-                "Whenever the user asks an agent to do something (e.g. 'Have the <agent>...', 'Tell <agent> to...', 'Ask <agent> to...', 'First, have <agent>...'), you MUST delegate the instruction to that sub-agent immediately using delegateTask.\n" +
-                "When the user gives a multi-step instruction (e.g. 'First, have <agentA> do X. Second, have <agentB> do Y.'), you MUST execute them sequentially: call delegateTask for <agentA> first, then call delegateTask for <agentB>, and then synthesize and report the result to the user.\n" +
-                "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly (e.g. 'What is the project code name?') WITHOUT instructing them to read from the blackboard!\n" +
-                "Available agents:\n"
+                "Whenever the user asks to do something, inspect the sub-agent definitions below and delegate to the agent that possesses the required tools.\n" +
+                "When the user gives a multi-step instruction, execute them sequentially or in parallel if independent.\n" +
+                "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly WITHOUT instructing them to read from the blackboard!\n\n" +
+                "AVAILABLE AGENTS & THEIR EXACT TOOL BOUNDARIES:\n"
         );
         for (AgentConfig config : configs) {
-            managerPrompt.append("- ").append(config.id()).append(": ").append(config.name())
-                    .append(" - ").append(config.systemMessage()).append("\n");
+            managerPrompt.append("- '").append(config.id()).append("' (").append(config.name()).append("):\n")
+                    .append("    Mission: ").append(config.systemMessage()).append("\n")
+                    .append("    Assigned Tools: ").append(config.tools()).append("\n");
         }
-        managerPrompt.append("\nROLE AWARENESS:\n")
-                .append(" - 'researcher' (Web Research Specialist): Dedicated to searching the web, navigating pages, reading documentation, and synthesizing external information.\n")
-                .append("\nWhen tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n")
-                .append("PARALLEL EXECUTION:\n")
-                .append("3. Use 'delegateParallel' to execute independent tasks concurrently to save time. For example, if you need the researcher to look up a topic and the devops engineer to check git status, delegate them in parallel.\n\n")
-                .append("HOST OS & COMMAND EXECUTION:\n")
-                .append("Host OS is: ").append(System.getProperty("os.name")).append(".\n")
-                .append("When requesting terminal commands from devops, ensure syntax matches the host OS. Always delegate distinct sequential steps as separate tasks.\n\n")
-                .append("GOAL ADHERENCE & ANTI-LOOPING:\n")
-                .append("1. Never repeat the exact same delegation if it failed, returned no useful data, OR if the user denied permission.\n")
-                .append("2. If a sub-agent returns irrelevant data, ignore the irrelevant parts and stick strictly to your goal.\n")
-                .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents, delegate 'searchDirectory'.\n")
-                .append("4. For web workflows, delegate strictly to the 'researcher'.\n")
-                .append("5. For research and file persistence workflows: instruct the researcher to write findings to the blackboard using writeToBlackboard with the specified key, and instruct the developer to read that key from the blackboard using readFromBlackboard and write it to disk using writeFile.\n")
-                .append("6. For long-term semantic memory workflows: delegate 'storeFact' or 'searchMemory' to the developer.\n")
-                .append("7. For Git version control workflows: delegate to 'devops'.\n")
-                .append("8. For temporary scratchpad and namespaced blackboard workflows: ALWAYS call delegateTask with agentId 'researcher' or 'architect'.\n")
-                .append("9. When asked to test Core Memory auto-injection, delegate write tasks then delegate a question without asking them to read the blackboard.\n")
-                .append("10. Use 'delegateParallel' to execute independent tasks concurrently to save time.\n");
+        managerPrompt.append("\nTOOL CATEGORIES EXPLAINED (RESPECT STRICTLY):\n")
+                .append(" - 'terminal': contains listDirectory, readFile, readFileLines, searchDirectory, writeFile, replaceLinesInFile, regexReplaceInFile, executeCommand. Assigned ONLY to: architect, developer, devops.\n")
+                .append(" - 'git': contains getGitStatus, getGitDiff, commitChanges. Assigned ONLY to: devops.\n")
+                .append(" - 'web': contains searchWeb, readWebPage, analyzeWebPage, clickWebElement, fillWebInput, readCurrentWebPage. Assigned ONLY to: researcher.\n")
+                .append(" - 'vision': contains inspectScreen, clickGridId, clickGridOffset, doubleClickGridId, rightClickGridId, scrollMouse, typeText, pressHotkey. Assigned ONLY to: gui_tester.\n")
+                .append(" - 'memory': contains storeFact, searchMemory. Assigned to: architect, developer, researcher.\n")
+                .append(" - 'context': contains writeToBlackboard, writeToNamespacedBlackboard, writeTemporaryData, readFromBlackboard, readFromNamespacedBlackboard, listBlackboardKeys. Assigned to all agents.\n\n")
+                .append("CRITICAL DELEGATION RULES:\n")
+                .append("1. EXPLAINING A PROJECT OR DIRECTORY: When the user asks to explain a project or how code works (e.g. 'explain me about this project working in path E:\\...'):\n")
+                .append("   - STEP 1: Immediately delegate to 'architect': 'Use listDirectory to inspect the directory structure at <path>, read the main entry points (such as AgentMain.java and other key services), and describe the architecture and how the system works.'\n")
+                .append("   - STEP 2: Synthesize the architect's output into a comprehensive, clear explanation for the user.\n")
+                .append("   - NEVER delegate local filesystem or directory tasks to 'researcher' (researcher only searches the public web) or 'gui_tester' (gui_tester only clicks desktop screens)!\n\n")
+                .append("2. OPENING OR LAUNCHING APPLICATIONS: When the user asks to open an application (e.g. 'open Antigravity application'):\n")
+                .append("   - Delegate to 'gui_tester' with instruction: 'Use pressHotkey with \"win\" to open the Start menu, then use typeText with the application name, then use pressHotkey with \"enter\" to launch it.' Alternatively, delegate to 'devops' to executeCommand with a launch command.\n\n")
+                .append("3. CODE MODIFICATIONS & CODING: Delegate code writing, editing, and bug fixes to 'developer'.\n")
+                .append("4. GIT REVIEWS & COMMITS: Delegate to 'devops'.\n")
+                .append("5. WEB RESEARCH: Delegate strictly to 'researcher' for online search, documentation lookups, and web scraping.\n")
+                .append("6. PARALLEL EXECUTION: Use 'delegateParallel' when executing two independent tasks simultaneously.\n")
+                .append("7. GOAL ADHERENCE: Never loop on failed actions. If an agent encounters an issue, switch to the proper specialized agent.\n");
+
         return managerPrompt.toString();
     }
 }

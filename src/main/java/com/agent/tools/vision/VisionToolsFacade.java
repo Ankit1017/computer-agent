@@ -37,12 +37,13 @@ public class VisionToolsFacade {
             throw new RuntimeException("Failed to initialize java.awt.Robot", e);
         }
 
-        // Instantiate a dedicated model just for vision tasks
+        // Instantiate a dedicated model just for vision tasks with maxRetries 1
         this.visionModel = OllamaChatModel.builder()
                 .baseUrl("http://localhost:11434")
-                .modelName("llama3.2-vision") // Ensure this model is pulled in Ollama
+                .modelName("llama3.2-vision")
                 .temperature(0.0)
                 .timeout(Duration.ofMinutes(2))
+                .maxRetries(1)
                 .build();
         this.clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
     }
@@ -92,21 +93,26 @@ public class VisionToolsFacade {
             String base64Image = Base64.getEncoder().encodeToString(baos.toByteArray());
 
             // 4. Construct LangChain4j multimodal message
-            String prompt = question + " (Note: The image has a 10x10 grid overlay. Reference the red ID numbers 0-99 to specify locations).";
+            String prompt = (question != null ? question : "Describe the contents of the screen.")
+                    + " (Note: The image has a 10x10 grid overlay. Reference the red ID numbers 0-99 to specify locations).";
             UserMessage msg = UserMessage.from(
                 TextContent.from(prompt),
                 ImageContent.from(base64Image, "image/png")
             );
 
-            return visionModel.generate(msg).content().text();
+            try {
+                return visionModel.generate(msg).content().text();
+            } catch (Exception modelEx) {
+                return "Vision Model Unavailable: Could not process image via Ollama (" + modelEx.getMessage() + "). Please ensure Ollama supports vision or navigate using keyboard hotkeys/coordinates.";
+            }
         } catch (Exception e) {
             return "Error capturing or analyzing screen: " + e.getMessage();
         }
     }
 
     @Tool("Move the mouse to the center of a specific grid ID (0-99) and click.")
-    public String clickGridId(@P("The numeric ID of the grid cell to click (0-99)") int gridId) {
-        if (gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+    public String clickGridId(@P("The numeric ID of the grid cell to click (0-99)") Integer gridId) {
+        if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
             return "Error: Invalid grid ID. Must be between 0 and 99.";
         }
 
@@ -136,6 +142,9 @@ public class VisionToolsFacade {
 
     @Tool("Type text into the currently focused window using the clipboard.")
     public String typeText(@P("The text to type") String text) {
+        if (text == null) {
+            text = "";
+        }
         if (!security.requestPermission("type text", text)) {
             return "ACTION REJECTED: User explicitly denied typing text. Do not retry this action.";
         }
@@ -175,14 +184,16 @@ public class VisionToolsFacade {
 
     @Tool("Click at a precise relative offset inside a grid cell (0-99). offsetPercentX and offsetPercentY range from 0.0 (top-left) to 1.0 (bottom-right). Center is 0.5, 0.5.")
     public String clickGridOffset(
-            @P("Grid cell ID (0-99)") int gridId,
-            @P("Horizontal offset within cell (0.0 to 1.0)") double offsetPercentX,
-            @P("Vertical offset within cell (0.0 to 1.0)") double offsetPercentY) {
-        if (gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+            @P("Grid cell ID (0-99)") Integer gridId,
+            @P("Horizontal offset within cell (0.0 to 1.0)") Double offsetPercentX,
+            @P("Vertical offset within cell (0.0 to 1.0)") Double offsetPercentY) {
+        if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
             return "Error: Invalid grid ID. Must be between 0 and 99.";
         }
-        double clampX = Math.max(0.0, Math.min(1.0, offsetPercentX));
-        double clampY = Math.max(0.0, Math.min(1.0, offsetPercentY));
+        double ox = (offsetPercentX != null) ? offsetPercentX : 0.5;
+        double oy = (offsetPercentY != null) ? offsetPercentY : 0.5;
+        double clampX = Math.max(0.0, Math.min(1.0, ox));
+        double clampY = Math.max(0.0, Math.min(1.0, oy));
 
         int cellWidth = screenSize.width / GRID_COLS;
         int cellHeight = screenSize.height / GRID_ROWS;
@@ -207,8 +218,8 @@ public class VisionToolsFacade {
     }
 
     @Tool("Double-click the mouse at the center of a grid ID (0-99).")
-    public String doubleClickGridId(@P("Grid cell ID (0-99)") int gridId) {
-        if (gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+    public String doubleClickGridId(@P("Grid cell ID (0-99)") Integer gridId) {
+        if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
             return "Error: Invalid grid ID. Must be between 0 and 99.";
         }
         int cellWidth = screenSize.width / GRID_COLS;
@@ -234,8 +245,8 @@ public class VisionToolsFacade {
     }
 
     @Tool("Right-click (context menu) at the center of a grid ID (0-99).")
-    public String rightClickGridId(@P("Grid cell ID (0-99)") int gridId) {
-        if (gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+    public String rightClickGridId(@P("Grid cell ID (0-99)") Integer gridId) {
+        if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
             return "Error: Invalid grid ID. Must be between 0 and 99.";
         }
         int cellWidth = screenSize.width / GRID_COLS;
@@ -258,13 +269,14 @@ public class VisionToolsFacade {
     }
 
     @Tool("Scroll the mouse wheel. Positive notches scroll down; negative notches scroll up.")
-    public String scrollMouse(@P("Number of scroll wheel notches (e.g., 5 for down, -5 for up)") int notches) {
-        if (!security.requestPermission("scroll mouse wheel", notches + " notches")) {
+    public String scrollMouse(@P("Number of scroll wheel notches (e.g., 5 for down, -5 for up)") Integer notches) {
+        int n = (notches != null) ? notches : 5;
+        if (!security.requestPermission("scroll mouse wheel", n + " notches")) {
             return "ACTION REJECTED: User explicitly denied mouse scroll. Do not retry this action.";
         }
         try {
-            robot.mouseWheel(notches);
-            return "Scrolled mouse " + notches + " notches.";
+            robot.mouseWheel(n);
+            return "Scrolled mouse " + n + " notches.";
         } catch (Exception e) {
             return "Error scrolling: " + e.getMessage();
         }

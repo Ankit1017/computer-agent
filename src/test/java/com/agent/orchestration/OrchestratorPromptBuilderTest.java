@@ -23,8 +23,8 @@ class OrchestratorPromptBuilderTest {
         assertThat(prompt)
                 .contains("You are the Swarm Orchestrator.")
                 .contains("CRITICAL: You ONLY have the tools: 'delegateTask' and 'delegateParallel'.")
-                .contains("- devops: DevOps Engineer - Manage git and builds")
-                .contains("- researcher: Web Research Specialist - Scour internet")
+                .contains("'devops' (DevOps Engineer)")
+                .contains("'researcher' (Web Research Specialist)")
                 .contains("PARALLEL EXECUTION:")
                 .contains("delegateParallel")
                 .contains("BLACKBOARD & CORE MEMORY AUTO-INJECTION");
