@@ -86,6 +86,13 @@
             <artifactId>langchain4j-embeddings-all-minilm-l6-v2</artifactId>
             <version>${langchain4j.version}</version>
         </dependency>
+
+        <!-- Microsoft Playwright for Headless Chromium Browser Navigation -->
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>1.40.0</version>
+        </dependency>
     </dependencies>
 
     <build>

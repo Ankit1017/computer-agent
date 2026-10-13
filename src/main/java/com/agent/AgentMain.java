@@ -47,18 +47,25 @@ public class AgentMain {
     public static void main(String[] args) {
         log.info("Starting Computer Agent - Milestone 7.2 Swarm Orchestrator Active");
 
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("\n[SYSTEM] Graceful shutdown initiated. Releasing resources...");
-            // If you have a global ExecutorService for virtual threads, call .shutdownNow() here.
-            // If you need to cleanly disconnect from ChromaDB, invoke the close methods here.
-            System.out.println("[SYSTEM] Shutdown complete. Goodbye.");
-        }));
-
         try {
             // 1. Shared Scanner for both chat input and HITL tool security confirmation
             Scanner scanner = new Scanner(System.in);
 
-            // 2. Initialize Local Vector Store & In-Process ONNX Embedding Model
+            // 2. Initialize Web Navigation Service & Headless Browser Shutdown Hook
+            WebNavigationService navService = new WebNavigationService();
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                System.out.println("\n[SYSTEM] Graceful shutdown initiated. Releasing resources...");
+                try {
+                    if (navService != null) {
+                        navService.close();
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error closing WebNavigationService: " + e.getMessage());
+                }
+                System.out.println("[SYSTEM] Shutdown complete. Goodbye.");
+            }));
+
+            // 3. Initialize Local Vector Store & In-Process ONNX Embedding Model
             EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
             EmbeddingStore<TextSegment> embeddingStore;
             try {
@@ -72,16 +79,15 @@ public class AgentMain {
                 embeddingStore = new InMemoryEmbeddingStore<>();
             }
 
-            // 3. Instantiate Tools
+            // 4. Instantiate Tools
             SecurityInterceptor security = new SecurityInterceptor(scanner);
             CommandExecutorService cmdService = new CommandExecutorService();
             FileSystemService fsService = new FileSystemService();
             TerminalToolsFacade terminalTools = new TerminalToolsFacade(security, cmdService, fsService);
             GitTools gitTools = new GitTools(scanner);
-            WebNavigationService webNavService = new WebNavigationService();
             WebDistillationService webDistService = new WebDistillationService();
             WebSearchService webSearchService = new WebSearchService();
-            WebToolsFacade webTools = new WebToolsFacade(security, webNavService, webDistService, webSearchService);
+            WebToolsFacade webTools = new WebToolsFacade(security, navService, webDistService, webSearchService);
             MemoryTools memoryTools = new MemoryTools(embeddingModel, embeddingStore);
             ContextTools contextTools = new ContextTools();
             VisionToolsFacade visionTools = new VisionToolsFacade(security);
@@ -168,7 +174,7 @@ public class AgentMain {
                 System.out.flush();
 
                 if (!scanner.hasNextLine()) {
-                    break;
+                    System.exit(0);
                 }
 
                 String input = scanner.nextLine().trim();
@@ -180,7 +186,7 @@ public class AgentMain {
 
                 if ("exit".equalsIgnoreCase(input) || "quit".equalsIgnoreCase(input)) {
                     System.out.println("Orchestrator > Swarm session terminated. Goodbye!");
-                    break;
+                    System.exit(0);
                 }
 
                 if ("y".equalsIgnoreCase(input) || "yes".equalsIgnoreCase(input) || "n".equalsIgnoreCase(input) || "no".equalsIgnoreCase(input)) {

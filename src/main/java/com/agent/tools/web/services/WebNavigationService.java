@@ -1,43 +1,66 @@
 package com.agent.tools.web.services;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
+import com.microsoft.playwright.TimeoutError;
+import com.microsoft.playwright.options.WaitUntilState;
 
-public class WebNavigationService {
-    private final HttpClient httpClient;
+public class WebNavigationService implements AutoCloseable {
+    private Playwright playwright;
+    private Browser browser;
 
     public WebNavigationService() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
+        System.out.println("[WEB] Initializing Headless Chromium Engine (Playwright)...");
+        this.playwright = Playwright.create();
+        // Launch headless chromium
+        this.browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+        System.out.println("[WEB] Headless Browser Engine Ready.");
     }
 
-    public WebNavigationService(HttpClient httpClient) {
-        this.httpClient = httpClient;
+    public WebNavigationService(Browser browser) {
+        this.browser = browser;
+        this.playwright = null;
     }
 
-    public String fetchRawHtml(String urlString) throws Exception {
+    public String fetchRawHtml(String urlString) {
         if (!urlString.startsWith("http")) {
             urlString = "https://" + urlString;
         }
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(urlString))
-                .timeout(Duration.ofSeconds(10))
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .GET()
-                .build();
+        try (Page page = browser.newPage()) {
+            // Navigate and wait for the network to become mostly idle (JS loaded)
+            try {
+                page.navigate(urlString, new Page.NavigateOptions()
+                        .setTimeout(15000) // 15 second timeout
+                        .setWaitUntil(WaitUntilState.NETWORKIDLE));
+            } catch (TimeoutError te) {
+                String content = page.content();
+                if (content != null && !content.isBlank() && !content.equals("<html><head></head><body></body></html>")) {
+                    return content;
+                }
+                throw te;
+            }
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-        if (response.statusCode() >= 400) {
-            throw new RuntimeException("HTTP Error: " + response.statusCode());
+            return page.content();
+        } catch (Exception e) {
+            throw new RuntimeException("Error rendering page via Playwright: " + e.getMessage(), e);
         }
+    }
 
-        return response.body();
+    @Override
+    public void close() {
+        if (browser != null) {
+            System.out.println("[WEB] Closing Headless Browser...");
+            try {
+                browser.close();
+            } catch (Exception ignored) {}
+        }
+        if (playwright != null) {
+            try {
+                playwright.close();
+            } catch (Exception ignored) {}
+        }
     }
 }
