@@ -11,7 +11,8 @@ import static org.mockito.Mockito.*;
 
 public class TerminalToolsFacadeTest {
 
-    static {
+    @org.junit.jupiter.api.BeforeAll
+    static void initByteBuddy() {
         System.setProperty("net.bytebuddy.experimental", "true");
     }
 
@@ -66,5 +67,32 @@ public class TerminalToolsFacadeTest {
         assertEquals("File content", result);
         verify(mockSecurity, never()).requestPermission(anyString(), anyString());
         verify(mockFsService, times(1)).readFileLines("test.txt", 1, 10);
+    }
+
+    @Test
+    void shouldDelegateListDirectoryOverloadsProperly() {
+        when(mockFsService.listDirectory("src", null, 4)).thenReturn("Tree 1");
+        when(mockFsService.listDirectory("src", ".*test.*", 4)).thenReturn("Tree 2");
+        when(mockFsService.listDirectory("src", ".*test.*", 2)).thenReturn("Tree 3");
+
+        assertEquals("Tree 1", facade.listDirectory("src"));
+        assertEquals("Tree 2", facade.listDirectory("src", ".*test.*"));
+        assertEquals("Tree 3", facade.listDirectory("src", ".*test.*", 2));
+
+        verify(mockFsService, times(1)).listDirectory("src", null, 4);
+        verify(mockFsService, times(1)).listDirectory("src", ".*test.*", 4);
+        verify(mockFsService, times(1)).listDirectory("src", ".*test.*", 2);
+    }
+
+    @Test
+    void shouldDelegateSearchDirectoryOverloadsProperly() {
+        when(mockFsService.searchDirectory("src", "Service", null)).thenReturn("Matches 1");
+        when(mockFsService.searchDirectory("src", "Service", ".java")).thenReturn("Matches 2");
+
+        assertEquals("Matches 1", facade.searchDirectory("src", "Service"));
+        assertEquals("Matches 2", facade.searchDirectory("src", "Service", ".java"));
+
+        verify(mockFsService, times(1)).searchDirectory("src", "Service", null);
+        verify(mockFsService, times(1)).searchDirectory("src", "Service", ".java");
     }
 }

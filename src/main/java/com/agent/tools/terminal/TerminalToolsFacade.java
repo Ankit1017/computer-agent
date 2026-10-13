@@ -38,24 +38,19 @@ public class TerminalToolsFacade {
         return commandService.execute(command);
     }
 
-    @Tool("Recursively list directory contents as a tree using default noise filters and depth.")
-    public String listDirectory(
-            @P("The path to the directory") String directoryPath) {
+    // --- LIST DIRECTORY OVERLOADS ---
+    @Tool("Recursively list directory contents as a tree using default settings.")
+    public String listDirectory(@P("The path to the directory") String directoryPath) {
         return fileService.listDirectory(directoryPath, null, 4);
     }
 
     @Tool("Recursively list directory contents as a tree with a custom exclusion regex.")
-    public String listDirectory(
-            @P("The path to the directory") String directoryPath,
-            @P("Regex to exclude paths (leave blank for default)") String excludeRegex) {
+    public String listDirectory(@P("The path to the directory") String directoryPath, @P("Regex to exclude paths") String excludeRegex) {
         return fileService.listDirectory(directoryPath, excludeRegex, 4);
     }
 
-    @Tool("Recursively list directory contents as a tree with custom exclusion regex and maximum traversal depth.")
-    public String listDirectory(
-            @P("The path to the directory") String directoryPath,
-            @P("Regex to exclude paths") String excludeRegex,
-            @P("Maximum depth to traverse") int maxDepth) {
+    @Tool("Recursively list directory contents as a tree with custom regex and maximum depth.")
+    public String listDirectory(@P("The path to the directory") String directoryPath, @P("Regex to exclude paths") String excludeRegex, @P("Maximum depth to traverse") int maxDepth) {
         return fileService.listDirectory(directoryPath, excludeRegex, maxDepth);
     }
 
@@ -74,18 +69,14 @@ public class TerminalToolsFacade {
         return fileService.writeFile(filePath, content);
     }
 
+    // --- SEARCH DIRECTORY OVERLOADS ---
     @Tool("Search directory files for a keyword or regex pattern across all text files.")
-    public String searchDirectory(
-            @P("The path to the directory") String directoryPath,
-            @P("The keyword or Regex pattern to search for") String keyword) {
+    public String searchDirectory(@P("The path to the directory") String directoryPath, @P("The keyword or Regex pattern to search for") String keyword) {
         return fileService.searchDirectory(directoryPath, keyword, null);
     }
 
-    @Tool("Search directory files for a keyword or regex pattern, filtered by a specific file extension.")
-    public String searchDirectory(
-            @P("The path to the directory") String directoryPath,
-            @P("The keyword or Regex pattern to search for") String keyword,
-            @P("File extension to filter by (e.g., '.java' or '.md')") String fileExtension) {
+    @Tool("Search directory files for a keyword or regex pattern, filtered by file extension.")
+    public String searchDirectory(@P("The path to the directory") String directoryPath, @P("The keyword or Regex pattern to search for") String keyword, @P("File extension to filter by (e.g., '.java')") String fileExtension) {
         return fileService.searchDirectory(directoryPath, keyword, fileExtension);
     }
 
