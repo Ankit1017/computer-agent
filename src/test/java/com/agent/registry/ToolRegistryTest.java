@@ -99,25 +99,25 @@ class ToolRegistryTest {
         assertThat(is).isNotNull();
 
         List<AgentConfig> configs = mapper.readValue(is, new TypeReference<List<AgentConfig>>() {});
-        assertThat(configs).hasSize(4);
+        assertThat(configs).hasSize(5);
 
         // Verify architect
         AgentConfig architect = configs.stream().filter(c -> "architect".equals(c.id())).findFirst().orElseThrow();
         assertThat(architect.name()).isEqualTo("System Architect");
-        assertThat(architect.tools()).containsExactly("web", "memory", "terminal", "context");
+        assertThat(architect.tools()).containsExactly("terminal", "memory", "context");
         Object[] architectTools = registry.getTools(architect.tools());
-        assertThat(architectTools).hasSize(4);
+        assertThat(architectTools).hasSize(3);
 
         // Verify developer
         AgentConfig developer = configs.stream().filter(c -> "developer".equals(c.id())).findFirst().orElseThrow();
         assertThat(developer.name()).isEqualTo("Lead Developer");
-        assertThat(developer.tools()).containsExactly("terminal", "context");
+        assertThat(developer.tools()).containsExactly("terminal", "memory", "context");
         Object[] developerTools = registry.getTools(developer.tools());
-        assertThat(developerTools).hasSize(2);
+        assertThat(developerTools).hasSize(3);
 
         // Verify devops
         AgentConfig devops = configs.stream().filter(c -> "devops".equals(c.id())).findFirst().orElseThrow();
-        assertThat(devops.name()).isEqualTo("DevOps & Release Engineer");
+        assertThat(devops.name()).isEqualTo("DevOps Engineer");
         assertThat(devops.tools()).containsExactly("terminal", "git", "context");
         Object[] devopsTools = registry.getTools(devops.tools());
         assertThat(devopsTools).hasSize(3);
@@ -128,5 +128,12 @@ class ToolRegistryTest {
         assertThat(guiTester.tools()).containsExactly("vision", "context");
         Object[] guiTools = registry.getTools(guiTester.tools());
         assertThat(guiTools).hasSize(2);
+
+        // Verify researcher
+        AgentConfig researcher = configs.stream().filter(c -> "researcher".equals(c.id())).findFirst().orElseThrow();
+        assertThat(researcher.name()).isEqualTo("Web Research Specialist");
+        assertThat(researcher.tools()).containsExactly("web", "memory", "context");
+        Object[] researcherTools = registry.getTools(researcher.tools());
+        assertThat(researcherTools).hasSize(3);
     }
 }

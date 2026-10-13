@@ -143,7 +143,9 @@ public class AgentMain {
                 managerPrompt.append("- ").append(config.id()).append(": ").append(config.name())
                         .append(" - ").append(config.systemMessage()).append("\n");
             }
-            managerPrompt.append("\nWhen tasks are independent, ALWAYS use delegateParallel. When tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n\n")
+            managerPrompt.append("\nROLE AWARENESS:\n")
+                    .append(" - 'researcher' (Web Research Specialist): Dedicated to searching the web, navigating pages, reading documentation, and synthesizing external information.\n")
+                    .append("\nWhen tasks are independent, ALWAYS use delegateParallel. When tasks depend on prior output, chain them sequentially. Synthesize their responses into a final answer.\n\n")
                     .append("HOST OS & COMMAND EXECUTION:\n")
                     .append("Host OS is: ").append(System.getProperty("os.name")).append(".\n")
                     .append("When requesting terminal commands from devops, ensure syntax matches the host OS (e.g. on Windows use 'ping -n 4' instead of '-c 4', and for sleep/delay use 'powershell -Command Start-Sleep -Seconds 65' instead of 'sleep 65'). Always delegate distinct sequential steps as separate tasks (run ping first, then run sleep/timeout).\n\n")
@@ -151,7 +153,8 @@ public class AgentMain {
                     .append("1. Never repeat the exact same delegation if it failed, returned no useful data, OR if the user denied permission via a security interceptor. If an action is denied, inform the user and ask how they want to proceed.\n")
                     .append("2. If a sub-agent returns a massive chunk of irrelevant data, ignore the irrelevant parts and stick strictly to your original goal.\n")
                     .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents for text or regex patterns, delegate 'searchDirectory'.\n")
-                    .append("4. For web workflows delegated to the architect: to load a URL, delegate 'readWebPage'. To analyze a large web page for a specific query without overloading context, delegate 'analyzeWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating multi-step web interaction, forward the exact URL, selectors, input text, and steps to the architect.\n");
+                    .append("4. For web workflows, delegate strictly to the 'researcher': to search the web, delegate 'searchWeb'. To load a URL, delegate 'readWebPage'. To analyze a large web page for a specific query without overloading context, delegate 'analyzeWebPage'. To fill form inputs or click elements, delegate 'fillWebInput' and 'clickWebElement'. To inspect the updated page DOM without reloading, delegate 'readCurrentWebPage'. When delegating web interaction, forward the exact URL, selectors, input text, and steps to the researcher.\n")
+                    .append("5. For research and file persistence workflows: instruct the researcher to write findings to the blackboard using writeToBlackboard with the specified key, and instruct the developer to read that key from the blackboard using readFromBlackboard and write it to disk using writeFile.\n");
 
             // 10. Instantiate the Swarm Orchestrator
             WorkerAgent orchestrator = AiServices.builder(WorkerAgent.class)
