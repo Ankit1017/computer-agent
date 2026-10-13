@@ -57,7 +57,7 @@ public class FileSystemService {
 
         // Default aggressive filter for common noise directories
         String regex = (excludeRegex == null || excludeRegex.isBlank())
-                ? "(?i).*(\\.git|target|node_modules|\\.idea|build|dist|out|venv|__pycache__).*"
+                ? "(?i).*(\\.git|target|node_modules|\\.idea|build|dist|out|venv|\\.venv|__pycache__|\\.pytest_cache|\\.mypy_cache|\\.cache|site-packages).*"
                 : excludeRegex;
 
         int depthLimit = maxDepth <= 0 ? 1 : maxDepth;

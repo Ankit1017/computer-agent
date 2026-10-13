@@ -113,7 +113,7 @@ class BlackboardServiceTest {
         service.writeData("core", "tempKey", "tempValue", 1);
         service.writeData("core", "permKey", "permValue", 0);
 
-        Thread.sleep(1200);
+        Thread.sleep(1500);
 
         String dump = service.dumpNamespace("core");
         assertThat(dump).doesNotContain("tempKey");

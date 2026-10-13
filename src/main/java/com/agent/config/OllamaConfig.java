@@ -15,7 +15,7 @@ public record OllamaConfig(
     public static final String DEFAULT_BASE_URL = "http://localhost:11434";
     public static final String DEFAULT_MODEL_NAME = "llama3.1";
     public static final double DEFAULT_TEMPERATURE = 0.0;
-    public static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(2);
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(5);
 
     /**
      * Resolves configuration using environment variables / system properties with fallbacks.
