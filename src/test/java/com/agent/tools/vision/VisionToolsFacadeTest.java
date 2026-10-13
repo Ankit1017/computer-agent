@@ -30,6 +30,7 @@ public class VisionToolsFacadeTest {
     private Robot mockRobot;
     private ChatLanguageModel mockVisionModel;
     private Dimension testScreenSize;
+    private java.awt.datatransfer.Clipboard mockClipboard;
     private VisionToolsFacade facade;
 
     @BeforeEach
@@ -37,8 +38,9 @@ public class VisionToolsFacadeTest {
         mockSecurity = mock(SecurityInterceptor.class);
         mockRobot = mock(Robot.class);
         mockVisionModel = mock(ChatLanguageModel.class);
+        mockClipboard = mock(java.awt.datatransfer.Clipboard.class);
         testScreenSize = new Dimension(1000, 1000); // 100x100 cells
-        facade = new VisionToolsFacade(mockSecurity, mockRobot, mockVisionModel, testScreenSize);
+        facade = new VisionToolsFacade(mockSecurity, mockRobot, mockVisionModel, testScreenSize, mockClipboard);
     }
 
     @Test
@@ -57,7 +59,7 @@ public class VisionToolsFacadeTest {
 
         String result = facade.clickGridId(45);
 
-        assertEquals("User denied mouse click.", result);
+        assertEquals("ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.", result);
         verify(mockSecurity, times(1)).requestPermission(
                 eq("click mouse at"),
                 eq("Grid ID:45 (X:550, Y:450)")
@@ -84,7 +86,7 @@ public class VisionToolsFacadeTest {
 
         String result = facade.typeText("hello world");
 
-        assertEquals("User denied typing text.", result);
+        assertEquals("ACTION REJECTED: User explicitly denied typing text. Do not retry this action.", result);
         verify(mockRobot, never()).keyPress(anyInt());
     }
 

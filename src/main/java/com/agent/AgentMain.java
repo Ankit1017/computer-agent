@@ -119,7 +119,7 @@ public class AgentMain {
             // 9. Build the Manager's dynamic prompt
             StringBuilder managerPrompt = new StringBuilder(
                     "You are the Swarm Orchestrator. You do not have direct access to the OS or web.\n" +
-                    "To fulfill the user's request, delegate tasks to sub-agents.\n" +
+                    "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask.\n" +
                     "CRITICAL: If you have multiple tasks that do not depend on each other, you MUST use the delegateParallel tool to execute them simultaneously.\n" +
                     "BLACKBOARD: Your sub-agents share a Blackboard via the 'context' tool. If Agent A needs to pass a large piece of data or sensitive credential to Agent B, instruct Agent A to write it to the blackboard with a specific key, and instruct Agent B to read from that key.\n" +
                     "Available agents:\n"
@@ -133,7 +133,7 @@ public class AgentMain {
                     .append("Host OS is: ").append(System.getProperty("os.name")).append(".\n")
                     .append("When requesting terminal commands from devops, ensure syntax matches the host OS (e.g. on Windows use 'ping -n 4' instead of '-c 4', and for sleep/delay use 'powershell -Command Start-Sleep -Seconds 65' instead of 'sleep 65'). Always delegate distinct sequential steps as separate tasks (run ping first, then run sleep/timeout).\n\n")
                     .append("GOAL ADHERENCE & ANTI-LOOPING:\n")
-                    .append("1. Never repeat the exact same delegation if it failed or returned no useful data. Stop and try a different tool or approach.\n")
+                    .append("1. Never repeat the exact same delegation if it failed, returned no useful data, OR if the user denied permission via a security interceptor. If an action is denied, inform the user and ask how they want to proceed.\n")
                     .append("2. If a sub-agent returns a massive chunk of irrelevant data, ignore the irrelevant parts and stick strictly to your original goal.\n")
                     .append("3. To understand directory structure, delegate 'listDirectory'. To search file contents for text or regex patterns, delegate 'searchDirectory'.\n");
 
@@ -165,6 +165,7 @@ public class AgentMain {
                 }
 
                 String input = scanner.nextLine().trim();
+                log.info("CLI input received: [{}]", input);
 
                 if (input.isEmpty()) {
                     continue;

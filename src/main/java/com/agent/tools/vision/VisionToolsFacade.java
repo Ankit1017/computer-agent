@@ -24,6 +24,7 @@ public class VisionToolsFacade {
     private final Robot robot;
     private final ChatLanguageModel visionModel;
     private final Dimension screenSize;
+    private final java.awt.datatransfer.Clipboard clipboard;
     private static final int GRID_COLS = 10;
     private static final int GRID_ROWS = 10;
 
@@ -43,13 +44,19 @@ public class VisionToolsFacade {
                 .temperature(0.0)
                 .timeout(Duration.ofMinutes(2))
                 .build();
+        this.clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
     }
 
     public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize) {
+        this(security, robot, visionModel, screenSize, Toolkit.getDefaultToolkit().getSystemClipboard());
+    }
+
+    public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize, java.awt.datatransfer.Clipboard clipboard) {
         this.security = security;
         this.robot = robot;
         this.visionModel = visionModel;
         this.screenSize = screenSize != null ? screenSize : new Dimension(1920, 1080);
+        this.clipboard = clipboard != null ? clipboard : Toolkit.getDefaultToolkit().getSystemClipboard();
     }
 
     @Tool("Capture the screen. The image is pre-processed with a Set-of-Marks grid (IDs 0 to 99). Ask the model what is located at a specific ID, or ask it to find the ID of a target application.")
@@ -114,7 +121,7 @@ public class VisionToolsFacade {
         int targetY = (row * cellHeight) + (cellHeight / 2);
 
         if (!security.requestPermission("click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
-            return "User denied mouse click.";
+            return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
         }
 
         try {
@@ -130,11 +137,27 @@ public class VisionToolsFacade {
     @Tool("Type text into the currently focused window using the clipboard.")
     public String typeText(@P("The text to type") String text) {
         if (!security.requestPermission("type text", text)) {
-            return "User denied typing text.";
+            return "ACTION REJECTED: User explicitly denied typing text. Do not retry this action.";
         }
         try {
             StringSelection stringSelection = new StringSelection(text);
-            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(stringSelection, null);
+            int attempts = 0;
+            while (true) {
+                try {
+                    clipboard.setContents(stringSelection, null);
+                    break;
+                } catch (IllegalStateException e) {
+                    if (++attempts >= 5) {
+                        throw e;
+                    }
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException ignored) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
 
             boolean isMac = System.getProperty("os.name").toLowerCase().contains("mac");
             int modifierKey = isMac ? KeyEvent.VK_META : KeyEvent.VK_CONTROL;
