@@ -1,0 +1,7 @@
+I want to finalize our project documentation. First, have the architect map the src/main/java/com/agent directory using listDirectory to understand our final package structure. Second, have the architect read the first 100 lines of TerminalToolsFacade.java and VisionToolsFacade.java to understand our enterprise tool layers, and write a comprehensive project summary to the blackboard under the key 'architecture_draft'. Third, have the developer read 'architecture_draft' from the blackboard and use writeFile to create a beautiful, highly detailed ARCHITECTURE.md file in the root directory explaining our Facades, SecurityInterceptor, and Set-of-Marks Vision integration. Finally, have the devops engineer check the git status and commit this new file with the message 'docs: finalize enterprise architecture documentation'.
+Y
+Y
+Y
+Y
+Y
+exit

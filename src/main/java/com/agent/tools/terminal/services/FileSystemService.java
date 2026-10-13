@@ -133,7 +133,7 @@ public class FileSystemService {
             return "Error: File path cannot be empty.";
         }
 
-        Path path = Paths.get(filePath);
+        Path path = resolveFilePath(filePath);
         if (!Files.exists(path)) {
             return "Error: File does not exist.";
         }
@@ -283,6 +283,27 @@ public class FileSystemService {
         return false;
     }
 
+    private Path resolveFilePath(String filePath) {
+        Path path = Paths.get(filePath);
+        if (!Files.exists(path)) {
+            try (Stream<Path> search = Files.walk(Paths.get("."))) {
+                java.util.Optional<Path> found = search
+                        .filter(Files::isRegularFile)
+                        .filter(p -> p.getFileName().toString().equalsIgnoreCase(path.getFileName().toString()))
+                        .filter(p -> {
+                            String s = p.toString().replace("\\", "/");
+                            return !s.contains("/target/") && !s.contains("/.git/") && !s.contains("/.idea/");
+                        })
+                        .findFirst();
+                if (found.isPresent()) {
+                    return found.get();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return path;
+    }
+
     /**
      * Writes or overwrites a file with content, creating an automatic .bak backup if the file already exists,
      * and enforcing a strict 5MB payload limit.
@@ -346,7 +367,7 @@ public class FileSystemService {
         if (filePath == null || filePath.isBlank()) {
             return "Error: File path cannot be empty.";
         }
-        Path path = Paths.get(filePath);
+        Path path = resolveFilePath(filePath);
         if (!Files.exists(path)) return "Error: File does not exist.";
         if (Files.isDirectory(path)) return "Error: Path is a directory, not a file.";
 
@@ -394,7 +415,7 @@ public class FileSystemService {
         if (filePath == null || filePath.isBlank()) {
             return "Error: File path cannot be empty.";
         }
-        Path path = Paths.get(filePath);
+        Path path = resolveFilePath(filePath);
         if (!Files.exists(path)) return "Error: File does not exist.";
         if (Files.isDirectory(path)) return "Error: Path is a directory, not a file.";
 

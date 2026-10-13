@@ -1,0 +1,1 @@
+Comprehensive project architecture summary
