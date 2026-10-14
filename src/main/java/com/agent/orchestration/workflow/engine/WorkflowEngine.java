@@ -2,6 +2,9 @@ package com.agent.orchestration.workflow.engine;
 
 import com.agent.WorkerAgent;
 import com.agent.factory.SubAgentFactory;
+import com.agent.orchestration.workflow.checkpoint.InMemoryCheckpointer;
+import com.agent.orchestration.workflow.checkpoint.WorkflowCheckpoint;
+import com.agent.orchestration.workflow.checkpoint.WorkflowCheckpointer;
 import com.agent.orchestration.workflow.model.WorkflowEdge;
 import com.agent.orchestration.workflow.model.WorkflowGraph;
 import com.agent.orchestration.workflow.model.WorkflowNode;
@@ -19,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -39,7 +43,9 @@ import java.util.concurrent.TimeoutException;
  *       gathers partial updates, and atomically applies them via channel {@link com.agent.orchestration.workflow.state.Reducer}s.</li>
  *   <li><b>Phase C: Planning (Edge Evaluation)</b>: Outbound edges from executed nodes are evaluated
  *       against the newly reduced state using {@link ConditionEvaluator}, collecting active nodes for
- *       the subsequent superstep until termination.</li>
+ *       the subsequent superstep.</li>
+ *   <li><b>Checkpointing</b>: Point-in-time snapshots are durably persisted after Phase C,
+ *       enabling state recovery and resumption via {@link #resume(String)} without re-executing completed nodes.</li>
  * </ul>
  */
 public class WorkflowEngine {
@@ -54,34 +60,55 @@ public class WorkflowEngine {
     private final StateUpdateParser outputParser;
     private final ConditionEvaluator conditionEvaluator;
     private final Duration stepTimeout;
+    private final WorkflowCheckpointer checkpointer;
     private final ObjectMapper objectMapper;
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker) {
-        this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT);
+        this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+    }
+
+    public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker, WorkflowCheckpointer checkpointer) {
+        this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
     }
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker, Duration stepTimeout) {
-        this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), stepTimeout);
+        this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), stepTimeout, null);
     }
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker, WorkflowState state) {
-        this(graph, agentInvoker, state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT);
+        this(graph, agentInvoker, state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+    }
+
+    public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker, WorkflowState state, WorkflowCheckpointer checkpointer) {
+        this(graph, agentInvoker, state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
     }
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker, WorkflowState state, Duration stepTimeout) {
-        this(graph, agentInvoker, state, new StateUpdateParser(), new ConditionEvaluator(), stepTimeout);
+        this(graph, agentInvoker, state, new StateUpdateParser(), new ConditionEvaluator(), stepTimeout, null);
+    }
+
+    public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker, WorkflowState state, Duration stepTimeout, WorkflowCheckpointer checkpointer) {
+        this(graph, agentInvoker, state, new StateUpdateParser(), new ConditionEvaluator(), stepTimeout, checkpointer);
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory) {
-        this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT);
+        this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+    }
+
+    public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowCheckpointer checkpointer) {
+        this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, Duration stepTimeout) {
-        this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), stepTimeout);
+        this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), stepTimeout, null);
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowState state) {
-        this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT);
+        this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+    }
+
+    public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowState state, WorkflowCheckpointer checkpointer) {
+        this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
     }
 
     public WorkflowEngine(
@@ -90,7 +117,7 @@ public class WorkflowEngine {
             WorkflowState state,
             StateUpdateParser outputParser
     ) {
-        this(graph, agentInvoker, state, outputParser, new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT);
+        this(graph, agentInvoker, state, outputParser, new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
     }
 
     public WorkflowEngine(
@@ -100,7 +127,7 @@ public class WorkflowEngine {
             StateUpdateParser outputParser,
             ConditionEvaluator conditionEvaluator
     ) {
-        this(graph, agentInvoker, state, outputParser, conditionEvaluator, DEFAULT_STEP_TIMEOUT);
+        this(graph, agentInvoker, state, outputParser, conditionEvaluator, DEFAULT_STEP_TIMEOUT, null);
     }
 
     public WorkflowEngine(
@@ -111,44 +138,116 @@ public class WorkflowEngine {
             ConditionEvaluator conditionEvaluator,
             Duration stepTimeout
     ) {
+        this(graph, agentInvoker, state, outputParser, conditionEvaluator, stepTimeout, null);
+    }
+
+    public WorkflowEngine(
+            WorkflowGraph graph,
+            WorkflowAgentInvoker agentInvoker,
+            WorkflowState state,
+            StateUpdateParser outputParser,
+            ConditionEvaluator conditionEvaluator,
+            Duration stepTimeout,
+            WorkflowCheckpointer checkpointer
+    ) {
         this.graph = Objects.requireNonNull(graph, "graph must not be null");
         this.agentInvoker = Objects.requireNonNull(agentInvoker, "agentInvoker must not be null");
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.outputParser = Objects.requireNonNull(outputParser, "outputParser must not be null");
         this.conditionEvaluator = Objects.requireNonNull(conditionEvaluator, "conditionEvaluator must not be null");
         this.stepTimeout = Objects.requireNonNull(stepTimeout, "stepTimeout must not be null");
+        this.checkpointer = checkpointer != null ? checkpointer : new InMemoryCheckpointer();
         this.objectMapper = new ObjectMapper();
     }
 
     /**
-     * Executes the workflow beginning from startNodeId with an empty initial state.
+     * Executes the workflow beginning from startNodeId with an auto-generated threadId and empty state.
      *
      * @return final reduced WorkflowState
      */
     public WorkflowState execute() {
-        return execute(Collections.emptyMap());
+        return execute(UUID.randomUUID().toString(), Collections.emptyMap());
     }
 
     /**
-     * Executes the workflow using the Bulk Synchronous Parallel (BSP) superstep model.
-     * In each superstep:
-     * 1. Phase A: Spawns concurrent virtual threads for all active nodes.
-     * 2. Phase B: Synchronizes at the barrier and merges partial updates atomically.
-     * 3. Phase C: Evaluates outgoing edges against the updated state to plan the next superstep.
+     * Executes the workflow beginning from startNodeId with an auto-generated threadId and initial state.
      *
      * @param initialState initial key-value state payload
      * @return final reduced WorkflowState
      */
     public WorkflowState execute(Map<String, Object> initialState) {
+        return execute(UUID.randomUUID().toString(), initialState);
+    }
+
+    /**
+     * Executes the workflow beginning from startNodeId with a designated threadId.
+     *
+     * @param threadId unique identifier for the execution run
+     * @return final reduced WorkflowState
+     */
+    public WorkflowState execute(String threadId) {
+        return execute(threadId, Collections.emptyMap());
+    }
+
+    /**
+     * Executes the workflow using the Bulk Synchronous Parallel (BSP) superstep model
+     * with checkpointing after each superstep.
+     *
+     * @param threadId     unique identifier for the workflow execution run
+     * @param initialState initial key-value state payload
+     * @return final reduced WorkflowState
+     */
+    public WorkflowState execute(String threadId, Map<String, Object> initialState) {
+        final String executionThreadId = (threadId != null && !threadId.isBlank())
+                ? threadId.trim()
+                : UUID.randomUUID().toString();
+
         if (initialState != null && !initialState.isEmpty()) {
             state.applyUpdate(initialState);
         }
 
-        Set<String> activeNodes = new LinkedHashSet<>();
-        activeNodes.add(graph.startNodeId());
-        int superstepCount = 0;
+        Set<String> startingActiveNodes = new LinkedHashSet<>();
+        startingActiveNodes.add(graph.startNodeId());
 
-        log.info("[WORKFLOW] Commencing BSP workflow '{}' at start node '{}'", graph.workflowId(), graph.startNodeId());
+        return runSuperstepLoop(executionThreadId, 0, startingActiveNodes);
+    }
+
+    /**
+     * Resumes workflow execution from the latest recorded checkpoint matching threadId.
+     * Rehydrates state and continues driving active nodes to __END__ without re-running prior nodes.
+     *
+     * @param threadId unique workflow run identifier to resume
+     * @return final reduced WorkflowState
+     */
+    public WorkflowState resume(String threadId) {
+        if (threadId == null || threadId.isBlank()) {
+            throw new IllegalArgumentException("threadId must not be null or blank to resume");
+        }
+
+        WorkflowCheckpoint checkpoint = checkpointer.loadLatest(threadId.trim())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Cannot resume workflow. No checkpoint found for threadId: " + threadId
+                ));
+
+        log.info("[WORKFLOW] Resuming workflow '{}' for threadId '{}' from superstep {} with active nodes: {}",
+                graph.workflowId(), threadId, checkpoint.superstep(), checkpoint.activeNodes());
+
+        state.restoreState(checkpoint.stateData());
+
+        Set<String> resumeActiveNodes = new LinkedHashSet<>(checkpoint.activeNodes());
+        return runSuperstepLoop(threadId.trim(), checkpoint.superstep(), resumeActiveNodes);
+    }
+
+    private WorkflowState runSuperstepLoop(
+            String threadId,
+            int initialSuperstepCount,
+            Set<String> initialActiveNodes
+    ) {
+        Set<String> activeNodes = new LinkedHashSet<>(initialActiveNodes);
+        int superstepCount = initialSuperstepCount;
+
+        log.info("[WORKFLOW] Commencing BSP workflow '{}' (threadId='{}') at superstep {} with active nodes: {}",
+                graph.workflowId(), threadId, superstepCount, activeNodes);
 
         while (!activeNodes.isEmpty() && !isTerminated(activeNodes)) {
             if (++superstepCount > MAX_STEP_LIMIT) {
@@ -297,11 +396,24 @@ public class WorkflowEngine {
             }
 
             activeNodes = nextActiveNodes;
-            log.info("[WORKFLOW] Superstep {} completed. Next active nodes: {}", superstepCount, activeNodes);
+
+            // =================================================================
+            // Checkpointing: Persist state & next active nodes for durable recovery
+            // =================================================================
+            WorkflowCheckpoint checkpoint = new WorkflowCheckpoint(
+                    threadId,
+                    graph.workflowId(),
+                    superstepCount,
+                    activeNodes,
+                    state.getData()
+            );
+            checkpointer.save(checkpoint);
+            log.info("[WORKFLOW] Checkpoint saved for thread '{}' superstep {}. Next active nodes: {}",
+                    threadId, superstepCount, activeNodes);
         }
 
-        log.info("[WORKFLOW] Workflow '{}' terminated successfully in {} superstep(s).",
-                graph.workflowId(), superstepCount);
+        log.info("[WORKFLOW] Workflow '{}' (threadId='{}') terminated successfully in {} superstep(s).",
+                graph.workflowId(), threadId, superstepCount);
 
         return state;
     }
@@ -375,5 +487,9 @@ public class WorkflowEngine {
 
     public Duration getStepTimeout() {
         return stepTimeout;
+    }
+
+    public WorkflowCheckpointer getCheckpointer() {
+        return checkpointer;
     }
 }

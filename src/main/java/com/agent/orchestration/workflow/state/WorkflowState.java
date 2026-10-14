@@ -127,6 +127,19 @@ public class WorkflowState {
     }
 
     /**
+     * Restores internal state from a checkpoint snapshot. Existing channels are cleared
+     * and replaced with the snapshot payload without triggering reducers.
+     *
+     * @param snapshot the serialized state map to restore
+     */
+    public synchronized void restoreState(Map<String, Object> snapshot) {
+        this.data.clear();
+        if (snapshot != null && !snapshot.isEmpty()) {
+            this.data.putAll(snapshot);
+        }
+    }
+
+    /**
      * Retrieves an immutable, detached snapshot of the current state payload.
      * Modifications to the returned map are disallowed and do not impact internal state.
      *

@@ -8,14 +8,20 @@ import com.agent.orchestration.workflow.services.WorkflowParserService;
 import com.agent.orchestration.workflow.state.AppendListReducer;
 import com.agent.orchestration.workflow.state.OverwriteReducer;
 import com.agent.orchestration.workflow.state.WorkflowState;
+import com.agent.orchestration.workflow.checkpoint.InMemoryCheckpointer;
+import com.agent.orchestration.workflow.checkpoint.JsonFileCheckpointer;
+import com.agent.orchestration.workflow.checkpoint.WorkflowCheckpoint;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -469,5 +475,218 @@ class WorkflowEngineTest {
 
         assertThat(finalState.get("aggregated")).isEqualTo(true);
         assertThat(finalState.get("phase")).isEqualTo("COMPLETE");
+    }
+
+    @Test
+    @DisplayName("Should record chronological audit trail across all supersteps using InMemoryCheckpointer")
+    void shouldRecordChronologicalAuditTrailAcrossSupersteps() {
+        WorkflowParserService parser = new WorkflowParserService();
+        WorkflowGraph graph = parser.parseFromResource("workflows/research_pipeline.json");
+
+        InMemoryCheckpointer checkpointer = new InMemoryCheckpointer();
+        WorkflowAgentInvoker invoker = (agentId, prompt) -> switch (agentId.toLowerCase()) {
+            case "researcher" -> "{ \"research\": \"Java 21 Virtual Threads\" }";
+            case "architect" -> "{ \"architecture\": \"Reactive Microkernel\" }";
+            case "developer" -> "{ \"code\": \"Done\" }";
+            default -> "{}";
+        };
+
+        String threadId = "audit-trail-thread-1";
+        WorkflowEngine engine = new WorkflowEngine(graph, invoker, checkpointer);
+        WorkflowState finalState = engine.execute(threadId, Map.of("initialKey", "seedVal"));
+
+        assertThat(finalState.get("code")).isEqualTo("Done");
+
+        // Verify audit trail captured all 3 supersteps
+        List<WorkflowCheckpoint> history = checkpointer.listHistory(threadId);
+        assertThat(history).hasSize(3);
+
+        // Step 1: researcher finished, activeNodes pointed to node_2
+        WorkflowCheckpoint step1 = history.get(0);
+        assertThat(step1.superstep()).isEqualTo(1);
+        assertThat(step1.activeNodes()).containsExactly("node_2");
+        assertThat(step1.stateData()).containsEntry("initialKey", "seedVal");
+        assertThat(step1.stateData()).containsEntry("research", "Java 21 Virtual Threads");
+
+        // Step 2: architect finished, activeNodes pointed to node_3
+        WorkflowCheckpoint step2 = history.get(1);
+        assertThat(step2.superstep()).isEqualTo(2);
+        assertThat(step2.activeNodes()).containsExactly("node_3");
+        assertThat(step2.stateData()).containsEntry("architecture", "Reactive Microkernel");
+
+        // Step 3: developer finished, activeNodes pointed to __END__
+        WorkflowCheckpoint step3 = history.get(2);
+        assertThat(step3.superstep()).isEqualTo(3);
+        assertThat(step3.activeNodes()).containsExactly(WorkflowGraph.END_NODE);
+        assertThat(step3.stateData()).containsEntry("code", "Done");
+    }
+
+    @Test
+    @DisplayName("Should recover from crash and resume execution from checkpoint without re-executing prior nodes")
+    void shouldRecoverFromCrashAndResumeWithoutReExecutingCompletedNodes() {
+        // 3-stage pipeline: node_1 -> node_2 -> node_3 -> __END__
+        WorkflowGraph pipeline = new WorkflowGraph(
+                "resumption_pipeline",
+                "node_1",
+                List.of(
+                        new WorkflowNode("node_1", "stage_1_agent", "Stage 1"),
+                        new WorkflowNode("node_2", "stage_2_agent", "Stage 2"),
+                        new WorkflowNode("node_3", "stage_3_agent", "Stage 3")
+                ),
+                List.of(
+                        new WorkflowEdge("node_1", "node_2"),
+                        new WorkflowEdge("node_2", "node_3"),
+                        new WorkflowEdge("node_3", WorkflowGraph.END_NODE)
+                )
+        );
+
+        InMemoryCheckpointer checkpointer = new InMemoryCheckpointer();
+        String threadId = "crash-resume-thread-42";
+
+        AtomicInteger node1ExecutionCount = new AtomicInteger(0);
+        AtomicInteger node2ExecutionCount = new AtomicInteger(0);
+        AtomicInteger node3ExecutionCount = new AtomicInteger(0);
+
+        // Run 1: Stage 2 fails with simulated crash
+        WorkflowAgentInvoker failingInvoker = (agentId, prompt) -> {
+            if ("stage_1_agent".equals(agentId)) {
+                node1ExecutionCount.incrementAndGet();
+                return "{ \"stage_1\": \"Stage 1 Finished\" }";
+            }
+            if ("stage_2_agent".equals(agentId)) {
+                node2ExecutionCount.incrementAndGet();
+                throw new RuntimeException("Simulated transient network outage at Stage 2");
+            }
+            node3ExecutionCount.incrementAndGet();
+            return "{}";
+        };
+
+        WorkflowState stateRun1 = new WorkflowState();
+        WorkflowEngine engineRun1 = new WorkflowEngine(pipeline, failingInvoker, stateRun1, checkpointer);
+
+        assertThatThrownBy(() -> engineRun1.execute(threadId, Map.of("run", "attempt_1")))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Simulated transient network outage at Stage 2");
+
+        // Assert Stage 1 ran once, Stage 2 failed, Stage 3 never ran
+        assertThat(node1ExecutionCount.get()).isEqualTo(1);
+        assertThat(node2ExecutionCount.get()).isEqualTo(1);
+        assertThat(node3ExecutionCount.get()).isEqualTo(0);
+
+        // Verify Checkpoint after Stage 1 (superstep 1) is safely preserved
+        WorkflowCheckpoint latestCheckpoint = checkpointer.loadLatest(threadId).orElseThrow();
+        assertThat(latestCheckpoint.superstep()).isEqualTo(1);
+        assertThat(latestCheckpoint.activeNodes()).containsExactly("node_2");
+        assertThat(latestCheckpoint.stateData()).containsEntry("stage_1", "Stage 1 Finished");
+
+        // Run 2: Re-attempt using engine.resume(threadId) with healed invoker
+        WorkflowAgentInvoker healedInvoker = (agentId, prompt) -> {
+            if ("stage_1_agent".equals(agentId)) {
+                node1ExecutionCount.incrementAndGet();
+                return "{ \"stage_1\": \"Stage 1 Finished\" }";
+            }
+            if ("stage_2_agent".equals(agentId)) {
+                node2ExecutionCount.incrementAndGet();
+                return "{ \"stage_2\": \"Stage 2 Healed & Finished\" }";
+            }
+            if ("stage_3_agent".equals(agentId)) {
+                node3ExecutionCount.incrementAndGet();
+                return "{ \"stage_3\": \"Stage 3 Complete\" }";
+            }
+            return "{}";
+        };
+
+        WorkflowState stateRun2 = new WorkflowState();
+        WorkflowEngine engineRun2 = new WorkflowEngine(pipeline, healedInvoker, stateRun2, checkpointer);
+
+        WorkflowState finalResumedState = engineRun2.resume(threadId);
+
+        // Crucial Assertion: node_1 was NOT executed a second time!
+        assertThat(node1ExecutionCount.get())
+                .as("node_1 must not be re-executed during resumption")
+                .isEqualTo(1);
+
+        // node_2 executed its second attempt and node_3 executed once
+        assertThat(node2ExecutionCount.get()).isEqualTo(2);
+        assertThat(node3ExecutionCount.get()).isEqualTo(1);
+
+        // Final state contains contributions from all 3 stages
+        assertThat(finalResumedState.get("stage_1")).isEqualTo("Stage 1 Finished");
+        assertThat(finalResumedState.get("stage_2")).isEqualTo("Stage 2 Healed & Finished");
+        assertThat(finalResumedState.get("stage_3")).isEqualTo("Stage 3 Complete");
+
+        // Audit trail contains 3 completed supersteps
+        List<WorkflowCheckpoint> finalHistory = checkpointer.listHistory(threadId);
+        assertThat(finalHistory).hasSize(3);
+        assertThat(finalHistory.get(2).activeNodes()).containsExactly(WorkflowGraph.END_NODE);
+    }
+
+    @Test
+    @DisplayName("Should persist checkpoints to disk with JsonFileCheckpointer and resume across engine instances")
+    void shouldPersistAndResumeWorkflowFromDiskUsingJsonFileCheckpointer(@TempDir Path tempDir) {
+        WorkflowGraph pipeline = new WorkflowGraph(
+                "disk_durable_pipeline",
+                "start_node",
+                List.of(
+                        new WorkflowNode("start_node", "agent_1", "Step 1"),
+                        new WorkflowNode("finish_node", "agent_2", "Step 2")
+                ),
+                List.of(
+                        new WorkflowEdge("start_node", "finish_node"),
+                        new WorkflowEdge("finish_node", WorkflowGraph.END_NODE)
+                )
+        );
+
+        JsonFileCheckpointer diskCheckpointer = new JsonFileCheckpointer(tempDir);
+        String threadId = "disk-durable-thread-99";
+
+        WorkflowState state = new WorkflowState();
+        state.registerReducer("log", new AppendListReducer<String>());
+
+        AtomicInteger agent1Calls = new AtomicInteger(0);
+        AtomicInteger agent2Calls = new AtomicInteger(0);
+
+        WorkflowAgentInvoker crashingInvoker = (agentId, prompt) -> {
+            if ("agent_1".equals(agentId)) {
+                agent1Calls.incrementAndGet();
+                return "{ \"log\": \"Step 1 written to disk\" }";
+            }
+            agent2Calls.incrementAndGet();
+            throw new RuntimeException("Simulated JVM crash before Step 2");
+        };
+
+        WorkflowEngine engine1 = new WorkflowEngine(pipeline, crashingInvoker, state, diskCheckpointer);
+
+        assertThatThrownBy(() -> engine1.execute(threadId))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Simulated JVM crash before Step 2");
+
+        assertThat(agent1Calls.get()).isEqualTo(1);
+        assertThat(agent2Calls.get()).isEqualTo(1);
+
+        // Simulate new JVM process by constructing a fresh checkpointer and engine from the same tempDir
+        JsonFileCheckpointer newDiskCheckpointer = new JsonFileCheckpointer(tempDir);
+        WorkflowState newState = new WorkflowState();
+        newState.registerReducer("log", new AppendListReducer<String>());
+
+        WorkflowAgentInvoker healedInvoker = (agentId, prompt) -> {
+            if ("agent_1".equals(agentId)) {
+                agent1Calls.incrementAndGet();
+                return "{ \"log\": \"Step 1 re-run unexpected\" }";
+            }
+            agent2Calls.incrementAndGet();
+            return "{ \"log\": \"Step 2 resumed from disk\" }";
+        };
+
+        WorkflowEngine engine2 = new WorkflowEngine(pipeline, healedInvoker, newState, newDiskCheckpointer);
+        WorkflowState resumedState = engine2.resume(threadId);
+
+        // Verify agent 1 was not called again
+        assertThat(agent1Calls.get()).isEqualTo(1);
+        assertThat(agent2Calls.get()).isEqualTo(2);
+
+        @SuppressWarnings("unchecked")
+        List<String> logEntries = resumedState.get("log", List.class);
+        assertThat(logEntries).containsExactly("Step 1 written to disk", "Step 2 resumed from disk");
     }
 }
