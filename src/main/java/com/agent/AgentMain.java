@@ -57,7 +57,7 @@ public class AgentMain {
             // 2. Initialize Tools & SubAgent Factory
             ToolRegistry toolRegistry = initializeTools(scanner, navService, blackboardService);
             ChatLanguageModel model = OllamaModelFactory.createModel();
-            SubAgentFactory factory = new SubAgentFactory(model, toolRegistry);
+            SubAgentFactory factory = new SubAgentFactory(model, toolRegistry, Path.of("workflows/custom_agents.json"));
 
             // 3. Load Configs & Spawn Sub-Agents
             List<AgentConfig> configs = loadAgentConfigs();
@@ -67,7 +67,8 @@ public class AgentMain {
             OrchestrationService orchestrationService = new OrchestrationService(factory, blackboardService);
             JsonFileCheckpointer checkpointer = new JsonFileCheckpointer(Path.of(".checkpoints"));
             WorkflowRegistryService workflowRegistry = new WorkflowRegistryService(orchestrationService, checkpointer);
-            WorkflowToolsFacade workflowToolsFacade = new WorkflowToolsFacade(workflowRegistry);
+            workflowRegistry.setWorkflowsDir(Path.of("workflows"));
+            WorkflowToolsFacade workflowToolsFacade = new WorkflowToolsFacade(workflowRegistry, factory);
 
             registerShutdownHook(navService, blackboardService, orchestrationService);
             WorkerAgent orchestrator = buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, workflowRegistry);

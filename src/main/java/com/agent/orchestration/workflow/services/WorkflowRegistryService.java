@@ -8,12 +8,14 @@ import com.agent.orchestration.workflow.checkpoint.WorkflowCheckpointer;
 import com.agent.orchestration.workflow.checkpoint.WorkflowExecutionStatus;
 import com.agent.orchestration.workflow.engine.WorkflowAgentInvoker;
 import com.agent.orchestration.workflow.engine.WorkflowEngine;
+import com.agent.orchestration.workflow.model.SequenceStep;
 import com.agent.orchestration.workflow.model.WorkflowEdge;
 import com.agent.orchestration.workflow.model.WorkflowExecutionResult;
 import com.agent.orchestration.workflow.model.WorkflowGraph;
 import com.agent.orchestration.workflow.model.WorkflowNode;
 import com.agent.orchestration.workflow.state.AppendListReducer;
 import com.agent.orchestration.workflow.state.WorkflowState;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,9 +59,11 @@ public class WorkflowRegistryService {
 
     private final Map<String, WorkflowGraph> registeredWorkflows = new ConcurrentHashMap<>();
     private final WorkflowParserService parserService;
+    private final ObjectMapper objectMapper;
     private WorkflowAgentInvoker agentInvoker;
     private WorkflowCheckpointer checkpointer;
     private java.util.function.Function<String, com.agent.config.AgentConfig> configResolver;
+    private Path workflowsDir;
 
     public WorkflowRegistryService() {
         this((WorkflowAgentInvoker) null, new InMemoryCheckpointer(), new WorkflowParserService());
@@ -77,6 +81,7 @@ public class WorkflowRegistryService {
         this.agentInvoker = agentInvoker;
         this.checkpointer = checkpointer != null ? checkpointer : new InMemoryCheckpointer();
         this.parserService = parserService != null ? parserService : new WorkflowParserService();
+        this.objectMapper = new ObjectMapper();
         this.configResolver = agentInvoker != null ? agentInvoker::getConfig : null;
         discoverDefaultWorkflows();
     }
@@ -167,6 +172,113 @@ public class WorkflowRegistryService {
         registeredWorkflows.put(key, graph);
         log.info("[REGISTRY] Registered workflow '{}' with {} nodes and {} edges",
                 graph.workflowId(), graph.nodes().size(), graph.edges().size());
+    }
+
+    /**
+     * Persists a workflow graph to the configured workflowsDir if configured.
+     *
+     * @param graph validated workflow graph
+     */
+    public void persistWorkflow(WorkflowGraph graph) {
+        if (workflowsDir == null || graph == null) {
+            return;
+        }
+        try {
+            if (!Files.exists(workflowsDir)) {
+                Files.createDirectories(workflowsDir);
+            }
+            Path targetFile = workflowsDir.resolve(graph.workflowId() + ".json");
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(targetFile.toFile(), graph);
+            log.info("[REGISTRY] Persisted workflow '{}' to: {}", graph.workflowId(), targetFile.toAbsolutePath());
+        } catch (Exception e) {
+            log.warn("[REGISTRY] Failed to persist workflow '{}' to '{}': {}", graph.workflowId(), workflowsDir, e.getMessage());
+        }
+    }
+
+    /**
+     * Parses, validates, and hot-registers a full custom DAG workflow from JSON,
+     * persisting to disk if workflowsDir is configured.
+     *
+     * @param workflowGraphJson complete JSON string of the WorkflowGraph
+     * @return validated and registered WorkflowGraph
+     */
+    public WorkflowGraph createAndRegisterWorkflow(String workflowGraphJson) {
+        if (workflowGraphJson == null || workflowGraphJson.isBlank()) {
+            throw new IllegalArgumentException("workflowGraphJson must not be null or blank");
+        }
+        WorkflowGraph graph = parserService.parse(workflowGraphJson.trim());
+        registerWorkflow(graph);
+        persistWorkflow(graph);
+        return graph;
+    }
+
+    /**
+     * Creates, validates, and hot-registers a linear sequence workflow from an ordered list of step specifications,
+     * automatically wiring edges: step_1 -> step_2 -> ... -> __END__.
+     * Persists to disk if workflowsDir is configured.
+     *
+     * @param workflowId   unique workflow identifier
+     * @param description  optional human-readable description
+     * @param listChannels optional list accumulation channels
+     * @param steps        ordered list of step specifications
+     * @return validated and registered WorkflowGraph
+     */
+    public WorkflowGraph createAndRegisterSequence(
+            String workflowId,
+            String description,
+            List<String> listChannels,
+            List<SequenceStep> steps
+    ) {
+        if (workflowId == null || workflowId.isBlank()) {
+            throw new IllegalArgumentException("workflowId must not be null or blank");
+        }
+        if (steps == null || steps.isEmpty()) {
+            throw new IllegalArgumentException("Sequence must contain at least one step");
+        }
+
+        List<WorkflowNode> nodes = new ArrayList<>();
+        for (int i = 0; i < steps.size(); i++) {
+            SequenceStep step = steps.get(i);
+            if (step == null) {
+                throw new IllegalArgumentException("Sequence step at index " + i + " must not be null");
+            }
+            String nodeId = (step.nodeId() != null && !step.nodeId().isBlank())
+                    ? step.nodeId().trim()
+                    : "step_" + (i + 1);
+            if (step.agentId() == null || step.agentId().isBlank()) {
+                throw new IllegalArgumentException("Sequence step '" + nodeId + "' must specify an agentId");
+            }
+            nodes.add(new WorkflowNode(
+                    nodeId,
+                    step.agentId().trim(),
+                    step.taskInstruction(),
+                    Boolean.TRUE.equals(step.interruptBefore()),
+                    Boolean.TRUE.equals(step.interruptAfter()),
+                    step.readChannels(),
+                    step.writeChannels()
+            ));
+        }
+
+        List<WorkflowEdge> edges = new ArrayList<>();
+        for (int i = 0; i < nodes.size() - 1; i++) {
+            edges.add(new WorkflowEdge(nodes.get(i).nodeId(), nodes.get(i + 1).nodeId()));
+        }
+        edges.add(new WorkflowEdge(nodes.get(nodes.size() - 1).nodeId(), WorkflowGraph.END_NODE));
+
+        String startNodeId = nodes.get(0).nodeId();
+        WorkflowGraph graph = new WorkflowGraph(
+                workflowId.trim(),
+                description,
+                startNodeId,
+                nodes,
+                edges,
+                listChannels != null ? listChannels : Collections.emptyList()
+        );
+
+        parserService.validateGraph(graph);
+        registerWorkflow(graph);
+        persistWorkflow(graph);
+        return graph;
     }
 
     /**
@@ -499,5 +611,13 @@ public class WorkflowRegistryService {
 
     public WorkflowParserService getParserService() {
         return parserService;
+    }
+
+    public Path getWorkflowsDir() {
+        return workflowsDir;
+    }
+
+    public void setWorkflowsDir(Path workflowsDir) {
+        this.workflowsDir = workflowsDir;
     }
 }

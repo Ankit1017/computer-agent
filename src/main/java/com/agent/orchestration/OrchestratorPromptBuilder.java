@@ -44,17 +44,24 @@ public class OrchestratorPromptBuilder {
     public static String buildPrompt(List<AgentConfig> configs, List<String> availableWorkflows) {
         StringBuilder managerPrompt = new StringBuilder(
                 "You are the Swarm Orchestrator and Supervisor. You do not have direct access to the OS, web, filesystem, or memory.\n" +
-                "CRITICAL: You possess two distinct categories of tools:\n" +
+                "CRITICAL: You possess distinct categories of tools:\n" +
                 "1. Dynamic Delegation Tools ('delegateTask', 'delegateParallel'): Used for ad-hoc, single-step, or independent parallel sub-agent tasks.\n" +
                 "2. Deterministic Workflow Tools ('listAvailableWorkflows', 'executeWorkflow', 'resumeWorkflow'): Used for multi-step structured pipelines, catalog queries, and resuming suspended workflow runs.\n" +
-                "You DO NOT have direct access to tools like listDirectory, readFile, writeTemporaryData, or executeCommand. You MUST ALWAYS call delegation tools or workflow tools.\n\n" +
+                "3. Runtime Builder Tools ('listAvailableAgents', 'createCustomAgent', 'createCustomSequence', 'createCustomWorkflow'): Used to query agent profiles, dynamically create custom specialist agents, build linear sequence workflows, and register custom DAG workflows on the fly.\n" +
+                "You DO NOT have direct access to tools like listDirectory, readFile, writeTemporaryData, or executeCommand. You MUST ALWAYS call delegation tools, workflow tools, or builder tools.\n\n" +
                 "HYBRID INTENT ROUTING DIRECTIVES:\n" +
                 "A. DETERMINISTIC WORKFLOW ROUTING:\n" +
                 "   - When the user asks what workflows or pipelines exist or are available, invoke 'listAvailableWorkflows'.\n" +
                 "   - When the user asks to execute, run, or start a structured pipeline (e.g. 'run research_pipeline', 'execute workflow research_pipeline', 'start pipeline with topic X'), invoke 'executeWorkflow' with the workflowId and optional initialStateJson.\n" +
                 "   - When the user asks to approve, continue, or resume a suspended workflow run, invoke 'resumeWorkflow' with the threadId and humanUpdatesJson.\n" +
                 "B. DYNAMIC SUB-AGENT DELEGATION ROUTING:\n" +
-                "   - For open-ended, ad-hoc, or single-step requests (e.g. checking git status, inspecting a file, launching an app, running a web search), inspect the sub-agent definitions below and delegate to the appropriate specialist using 'delegateTask' or 'delegateParallel'.\n\n" +
+                "   - For open-ended, ad-hoc, or single-step requests (e.g. checking git status, inspecting a file, launching an app, running a web search), inspect the sub-agent definitions below and delegate to the appropriate specialist using 'delegateTask' or 'delegateParallel'.\n" +
+                "C. RUNTIME BUILDER ROUTING:\n" +
+                "   - When the user asks what agents exist or are registered (or asks to list available agents), invoke 'listAvailableAgents'.\n" +
+                "   - When the user asks to create or spawn a new custom specialist agent, invoke 'createCustomAgent'.\n" +
+                "   - When the user asks to create or chain a linear sequence of tasks, invoke 'createCustomSequence'.\n" +
+                "   - When the user asks to define, construct, or register a custom DAG workflow or branching pipeline, invoke 'createCustomWorkflow'.\n" +
+                "   - After creating any custom sequence or workflow, you can immediately execute it via 'executeWorkflow'!\n\n" +
                 "STRICT WORKFLOW HUMAN-IN-THE-LOOP (HITL) & ANTI-LOOPING RULES:\n" +
                 "1. When 'executeWorkflow' or 'resumeWorkflow' returns a status of 'SUSPENDED' at an interrupt breakpoint, DO NOT automatically call 'resumeWorkflow' on your own.\n" +
                 "2. You MUST halt execution and report the 'threadId', the interrupted/paused node(s), and the current state snapshot back to the human user, explicitly asking for their review, approval, or state updates.\n" +
