@@ -56,4 +56,22 @@ public class ContextToolsFacade {
     public String listNamespacedBlackboardKeys(@P("The namespace") String namespace) {
         return blackboardService.listKeys(namespace);
     }
+
+    @Tool("Delete a specific key from a namespace on the blackboard.")
+    public String deleteFromBlackboard(
+            @P("The namespace containing the key") String namespace,
+            @P("The key to delete") String key) {
+        boolean deleted = blackboardService.deleteData(namespace, key);
+        return deleted
+                ? "Deleted key '" + key + "' from namespace '" + namespace + "'."
+                : "Key '" + key + "' was not found in namespace '" + namespace + "'.";
+    }
+
+    @Tool("Wait for a specific key to be written to a namespace on the blackboard within a timeout period (seconds), returning the value as soon as it appears.")
+    public String awaitBlackboardKey(
+            @P("The namespace to monitor") String namespace,
+            @P("The key to wait for") String key,
+            @P("Maximum timeout in seconds") int timeoutSeconds) {
+        return blackboardService.awaitValue(namespace, key, timeoutSeconds);
+    }
 }
