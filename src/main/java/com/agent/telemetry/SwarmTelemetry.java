@@ -109,12 +109,66 @@ public class SwarmTelemetry {
             }
             try {
                 T result = action.call();
-                span.setStatus(SpanStatus.OK, "Completed");
+                if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                    span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
+                } else {
+                    span.setStatus(SpanStatus.OK, "Completed");
+                }
                 return result;
             } catch (Exception e) {
                 span.recordException(e);
                 throw e;
             }
+        }
+    }
+
+    /**
+     * Executes a tool action with Supplier and automatic child span recording, latency tracking, and error detection.
+     */
+    public static <T> T executeTool(String toolName, String argumentsJson, java.util.function.Supplier<T> action) {
+        try (SwarmSpan span = startSpan("tool.execute")) {
+            span.setAttribute(TelemetryAttributes.TOOL_NAME, toolName);
+            if (argumentsJson != null && !argumentsJson.isBlank()) {
+                span.setAttribute(TelemetryAttributes.TOOL_ARGUMENTS_JSON, argumentsJson);
+            }
+            try {
+                T result = action.get();
+                if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                    span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
+                } else {
+                    span.setStatus(SpanStatus.OK, "Completed");
+                }
+                return result;
+            } catch (Throwable t) {
+                span.recordException(t);
+                if (t instanceof RuntimeException re) throw re;
+                if (t instanceof Error err) throw err;
+                throw new RuntimeException(t);
+            }
+        }
+    }
+
+    /**
+     * Safely formats key-value argument pairs into a JSON string summary.
+     */
+    public static String formatArgs(Object... keyValues) {
+        if (keyValues == null || keyValues.length == 0) {
+            return "{}";
+        }
+        Map<String, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i < keyValues.length; i += 2) {
+            String key = String.valueOf(keyValues[i]);
+            Object val = (i + 1 < keyValues.length) ? keyValues[i + 1] : null;
+            if (val instanceof String s && s.length() > 150) {
+                map.put(key, s.substring(0, 147) + "...");
+            } else {
+                map.put(key, val);
+            }
+        }
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map);
+        } catch (Exception e) {
+            return map.toString();
         }
     }
 

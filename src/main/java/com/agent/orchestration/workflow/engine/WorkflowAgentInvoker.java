@@ -41,4 +41,12 @@ public interface WorkflowAgentInvoker {
     default AgentConfig getConfig(String agentId) {
         return null;
     }
+
+    /**
+     * Evicts any transient chat memory associated with the execution thread.
+     *
+     * @param threadId unique workflow run identifier
+     */
+    default void evictMemory(String threadId) {
+    }
 }

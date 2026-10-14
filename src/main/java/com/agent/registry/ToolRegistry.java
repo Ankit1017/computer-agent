@@ -47,10 +47,21 @@ public class ToolRegistry {
      * Initializes the tool registry with standard agent tools, shared context blackboard, and vision tools.
      */
     public ToolRegistry(TerminalToolsFacade terminalTools, GitToolsFacade gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextToolsFacade contextTools, VisionToolsFacade visionTools) {
-        this(terminalTools, (Object) gitTools, (Object) webTools, (Object) memoryTools, (Object) contextTools, visionTools);
+        this(terminalTools, (Object) gitTools, (Object) webTools, (Object) memoryTools, (Object) contextTools, (Object) visionTools, null);
     }
 
     public ToolRegistry(TerminalToolsFacade terminalTools, Object gitTools, Object webTools, Object memoryTools, Object contextTools, VisionToolsFacade visionTools) {
+        this(terminalTools, gitTools, webTools, memoryTools, contextTools, (Object) visionTools, null);
+    }
+
+    /**
+     * Initializes the tool registry with standard agent tools, context blackboard, vision, and telemetry tools.
+     */
+    public ToolRegistry(TerminalToolsFacade terminalTools, GitToolsFacade gitTools, WebToolsFacade webTools, MemoryToolsFacade memoryTools, ContextToolsFacade contextTools, VisionToolsFacade visionTools, com.agent.telemetry.TelemetryToolsFacade telemetryTools) {
+        this(terminalTools, (Object) gitTools, (Object) webTools, (Object) memoryTools, (Object) contextTools, (Object) visionTools, telemetryTools);
+    }
+
+    public ToolRegistry(TerminalToolsFacade terminalTools, Object gitTools, Object webTools, Object memoryTools, Object contextTools, Object visionTools, Object telemetryTools) {
         if (terminalTools != null) {
             registerTool("terminal", terminalTools);
         }
@@ -68,6 +79,9 @@ public class ToolRegistry {
         }
         if (visionTools != null) {
             registerTool("vision", visionTools);
+        }
+        if (telemetryTools != null) {
+            registerTool("telemetry", telemetryTools);
         }
         log.info("Initialized ToolRegistry with available tools: {}", toolMap.keySet());
     }

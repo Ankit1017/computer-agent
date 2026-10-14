@@ -10,6 +10,9 @@ import com.agent.orchestration.workflow.WorkflowToolsFacade;
 import com.agent.orchestration.workflow.checkpoint.JsonFileCheckpointer;
 import com.agent.orchestration.workflow.services.WorkflowRegistryService;
 import com.agent.registry.ToolRegistry;
+import com.agent.telemetry.JsonLinesTraceExporter;
+import com.agent.telemetry.SwarmTelemetry;
+import com.agent.telemetry.TelemetryToolsFacade;
 import com.agent.tools.context.ContextToolsFacade;
 import com.agent.tools.context.services.BlackboardService;
 import com.agent.tools.git.GitToolsFacade;
@@ -50,12 +53,22 @@ public class AgentMain {
         log.info("Starting Computer Agent - Milestone 10.4.2 Hybrid Swarm Orchestrator Active");
 
         try (Scanner scanner = new Scanner(System.in)) {
+            // 0. Initialize Telemetry Exporters
+            Path traceDir = Path.of(".traces");
+            try {
+                Files.createDirectories(traceDir);
+                SwarmTelemetry.addExporter(new JsonLinesTraceExporter(traceDir.resolve("swarm_traces.jsonl")));
+            } catch (Exception e) {
+                log.warn("Failed to initialize JsonLinesTraceExporter: {}", e.getMessage());
+            }
+            TelemetryToolsFacade telemetryToolsFacade = new TelemetryToolsFacade();
+
             // 1. Core Services & Shutdown
             WebNavigationService navService = new WebNavigationService();
             BlackboardService blackboardService = new BlackboardService();
 
             // 2. Initialize Tools & SubAgent Factory
-            ToolRegistry toolRegistry = initializeTools(scanner, navService, blackboardService);
+            ToolRegistry toolRegistry = initializeTools(scanner, navService, blackboardService, telemetryToolsFacade);
             ChatLanguageModel model = OllamaModelFactory.createModel();
             SubAgentFactory factory = new SubAgentFactory(model, toolRegistry, Path.of("workflows/custom_agents.json"));
 
@@ -71,7 +84,7 @@ public class AgentMain {
             WorkflowToolsFacade workflowToolsFacade = new WorkflowToolsFacade(workflowRegistry, factory);
 
             registerShutdownHook(navService, blackboardService, orchestrationService);
-            WorkerAgent orchestrator = buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, workflowRegistry);
+            WorkerAgent orchestrator = buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, workflowRegistry, telemetryToolsFacade);
 
             // 5. Start CLI
             runCliLoop(scanner, orchestrator, swarm, workflowRegistry);
@@ -98,6 +111,10 @@ public class AgentMain {
     }
 
     private static ToolRegistry initializeTools(Scanner scanner, WebNavigationService navService, BlackboardService blackboardService) {
+        return initializeTools(scanner, navService, blackboardService, new TelemetryToolsFacade());
+    }
+
+    private static ToolRegistry initializeTools(Scanner scanner, WebNavigationService navService, BlackboardService blackboardService, TelemetryToolsFacade telemetryToolsFacade) {
         SecurityInterceptor security = new SecurityInterceptor(scanner);
         return new ToolRegistry(
                 new TerminalToolsFacade(security, new CommandExecutorService(), new FileSystemService()),
@@ -105,18 +122,22 @@ public class AgentMain {
                 new WebToolsFacade(security, navService, new WebDistillationService(), new WebSearchService(), new WebAnalysisService()),
                 new MemoryToolsFacade(new LongTermMemoryService()),
                 new ContextToolsFacade(blackboardService),
-                new VisionToolsFacade(security)
+                new VisionToolsFacade(security),
+                telemetryToolsFacade
         );
     }
 
-    private static List<AgentConfig> loadAgentConfigs() throws Exception {
+    public static List<AgentConfig> loadAgentConfigs() throws Exception {
+        return loadAgentConfigs(Path.of("agents.json"));
+    }
+
+    public static List<AgentConfig> loadAgentConfigs(Path configPath) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
-        Path localConfig = Path.of("agents.json");
         InputStream configStream;
         
-        if (Files.exists(localConfig)) {
-            System.out.println("[CONFIG] Loading agents manifest from working directory: " + localConfig.toAbsolutePath());
-            configStream = Files.newInputStream(localConfig);
+        if (configPath != null && Files.exists(configPath)) {
+            System.out.println("[CONFIG] Loading agents manifest from working directory: " + configPath.toAbsolutePath());
+            configStream = Files.newInputStream(configPath);
         } else {
             System.out.println("[CONFIG] Loading default agents manifest from classpath resources.");
             configStream = AgentMain.class.getClassLoader().getResourceAsStream("agents.json");
@@ -144,7 +165,7 @@ public class AgentMain {
     ) {
         WorkflowRegistryService dummyRegistry = new WorkflowRegistryService(orchestrationService);
         WorkflowToolsFacade dummyFacade = new WorkflowToolsFacade(dummyRegistry);
-        return buildOrchestrator(model, orchestrationService, dummyFacade, configs, dummyRegistry);
+        return buildOrchestrator(model, orchestrationService, dummyFacade, configs, dummyRegistry, new TelemetryToolsFacade());
     }
 
     public static WorkerAgent buildOrchestrator(
@@ -153,7 +174,7 @@ public class AgentMain {
             WorkflowToolsFacade workflowToolsFacade,
             List<AgentConfig> configs
     ) {
-        return buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, null);
+        return buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, null, new TelemetryToolsFacade());
     }
 
     public static WorkerAgent buildOrchestrator(
@@ -163,6 +184,17 @@ public class AgentMain {
             List<AgentConfig> configs,
             WorkflowRegistryService workflowRegistry
     ) {
+        return buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, workflowRegistry, new TelemetryToolsFacade());
+    }
+
+    public static WorkerAgent buildOrchestrator(
+            ChatLanguageModel model,
+            OrchestrationService orchestrationService,
+            WorkflowToolsFacade workflowToolsFacade,
+            List<AgentConfig> configs,
+            WorkflowRegistryService workflowRegistry,
+            TelemetryToolsFacade telemetryToolsFacade
+    ) {
         DelegationFacade delegationFacade = new DelegationFacade(orchestrationService);
         String managerPrompt = OrchestratorPromptBuilder.buildPrompt(configs, workflowRegistry);
 
@@ -171,11 +203,16 @@ public class AgentMain {
                 .chatMemory(MessageWindowChatMemory.withMaxMessages(20))
                 .systemMessageProvider(chatMemoryId -> managerPrompt);
 
+        List<Object> tools = new java.util.ArrayList<>();
+        tools.add(delegationFacade);
         if (workflowToolsFacade != null) {
-            builder.tools(delegationFacade, workflowToolsFacade);
-        } else {
-            builder.tools(delegationFacade);
+            tools.add(workflowToolsFacade);
         }
+        if (telemetryToolsFacade != null) {
+            tools.add(telemetryToolsFacade);
+        }
+
+        builder.tools(tools.toArray());
 
         return builder.build();
     }

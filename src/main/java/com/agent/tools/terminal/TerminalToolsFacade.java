@@ -29,71 +29,95 @@ public class TerminalToolsFacade {
 
     @Tool("Execute a raw terminal command on the host OS. Returns the standard output or error.")
     public String executeCommand(@P("command to execute") String command) {
-        if (command == null || command.isBlank()) {
-            return "Error: Command cannot be empty.";
-        }
-        if (!security.requestPermission("execute command", command)) {
-            return "User denied command execution.";
-        }
-        return commandService.execute(command);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("executeCommand",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("command", command),
+                () -> {
+                    if (command == null || command.isBlank()) {
+                        return "Error: Command cannot be empty.";
+                    }
+                    if (!security.requestPermission("execute command", command)) {
+                        return "User denied command execution.";
+                    }
+                    return commandService.execute(command);
+                });
     }
 
     @Tool("Execute a raw terminal command on the host OS within a specific working directory. Returns standard output or error.")
     public String executeCommand(
             @P("command to execute") String command,
             @P("working directory path") String workingDirectory) {
-        if (command == null || command.isBlank()) {
-            return "Error: Command cannot be empty.";
-        }
-        String target = (workingDirectory != null && !workingDirectory.isBlank())
-                ? command + " (in " + workingDirectory + ")"
-                : command;
-        if (!security.requestPermission("execute command", target)) {
-            return "User denied command execution.";
-        }
-        return commandService.execute(command, workingDirectory);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("executeCommand",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("command", command, "workingDirectory", workingDirectory),
+                () -> {
+                    if (command == null || command.isBlank()) {
+                        return "Error: Command cannot be empty.";
+                    }
+                    String target = (workingDirectory != null && !workingDirectory.isBlank())
+                            ? command + " (in " + workingDirectory + ")"
+                            : command;
+                    if (!security.requestPermission("execute command", target)) {
+                        return "User denied command execution.";
+                    }
+                    return commandService.execute(command, workingDirectory);
+                });
     }
 
     // --- LIST DIRECTORY OVERLOADS ---
     @Tool("Recursively list directory contents as a tree using default settings.")
     public String listDirectory(@P("The path to the directory") String directoryPath) {
-        return fileService.listDirectory(directoryPath, null, 4);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("listDirectory",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("directoryPath", directoryPath),
+                () -> fileService.listDirectory(directoryPath, null, 4));
     }
 
     @Tool("Recursively list directory contents as a tree with a custom exclusion regex.")
     public String listDirectory(@P("The path to the directory") String directoryPath, @P("Regex to exclude paths") String excludeRegex) {
-        return fileService.listDirectory(directoryPath, excludeRegex, 4);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("listDirectory",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("directoryPath", directoryPath, "excludeRegex", excludeRegex),
+                () -> fileService.listDirectory(directoryPath, excludeRegex, 4));
     }
 
     @Tool("Recursively list directory contents as a tree with custom regex and maximum depth.")
     public String listDirectory(@P("The path to the directory") String directoryPath, @P("Regex to exclude paths") String excludeRegex, @P("Maximum depth to traverse") int maxDepth) {
-        return fileService.listDirectory(directoryPath, excludeRegex, maxDepth);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("listDirectory",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("directoryPath", directoryPath, "excludeRegex", excludeRegex, "maxDepth", maxDepth),
+                () -> fileService.listDirectory(directoryPath, excludeRegex, maxDepth));
     }
 
     @Tool("Read the string contents of a text file.")
     public String readFile(@P("path to file") String path) {
-        return fileService.readFile(path);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("readFile",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("path", path),
+                () -> fileService.readFile(path));
     }
 
     @Tool("Create a new file or completely overwrite an existing one. If overwriting, an automatic .bak backup is created. Max payload: 5MB.")
     public String writeFile(
             @P("The path to the file") String filePath,
             @P("The complete text content to write") String content) {
-        if (!security.requestPermission("write file at", filePath)) {
-            return "User denied file write.";
-        }
-        return fileService.writeFile(filePath, content);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("writeFile",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("filePath", filePath, "content", content),
+                () -> {
+                    if (!security.requestPermission("write file at", filePath)) {
+                        return "User denied file write.";
+                    }
+                    return fileService.writeFile(filePath, content);
+                });
     }
 
     // --- SEARCH DIRECTORY OVERLOADS ---
     @Tool("Search directory files for a keyword or regex pattern across all text files.")
     public String searchDirectory(@P("The path to the directory") String directoryPath, @P("The keyword or Regex pattern to search for") String keyword) {
-        return fileService.searchDirectory(directoryPath, keyword, null);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("searchDirectory",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("directoryPath", directoryPath, "keyword", keyword),
+                () -> fileService.searchDirectory(directoryPath, keyword, null));
     }
 
     @Tool("Search directory files for a keyword or regex pattern, filtered by file extension.")
     public String searchDirectory(@P("The path to the directory") String directoryPath, @P("The keyword or Regex pattern to search for") String keyword, @P("File extension to filter by (e.g., '.java')") String fileExtension) {
-        return fileService.searchDirectory(directoryPath, keyword, fileExtension);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("searchDirectory",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("directoryPath", directoryPath, "keyword", keyword, "fileExtension", fileExtension),
+                () -> fileService.searchDirectory(directoryPath, keyword, fileExtension));
     }
 
     @Tool("Read specific lines from a text file with line numbers. STRICT LIMIT: Max 500 lines per read. Automatically rejects binary files. Use this for safe, paginated file inspection.")
@@ -101,7 +125,9 @@ public class TerminalToolsFacade {
             @P("The path to the file") String filePath,
             @P("The starting line number (1-indexed)") int startLine,
             @P("The ending line number (inclusive). Max 500 lines above startLine.") int endLine) {
-        return fileService.readFileLines(filePath, startLine, endLine);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("readFileLines",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("filePath", filePath, "startLine", startLine, "endLine", endLine),
+                () -> fileService.readFileLines(filePath, startLine, endLine));
     }
 
     @Tool("Replace specific lines in a file. An automatic .bak backup is created before patching.")
@@ -110,10 +136,14 @@ public class TerminalToolsFacade {
             @P("The starting line number (1-indexed)") int startLine,
             @P("The ending line number (inclusive)") int endLine,
             @P("The new content to insert") String content) {
-        if (!security.requestPermission("replace lines in", filePath + " (" + startLine + "-" + endLine + ")")) {
-            return "User denied line replacement.";
-        }
-        return fileService.replaceLines(filePath, startLine, endLine, content);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("replaceLinesInFile",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("filePath", filePath, "startLine", startLine, "endLine", endLine, "content", content),
+                () -> {
+                    if (!security.requestPermission("replace lines in", filePath + " (" + startLine + "-" + endLine + ")")) {
+                        return "User denied line replacement.";
+                    }
+                    return fileService.replaceLines(filePath, startLine, endLine, content);
+                });
     }
 
     @Tool("Search for a Regex pattern in a file and replace it. Highly recommended over line-replacement to avoid line-shifting errors. An automatic .bak backup is created.")
@@ -121,9 +151,13 @@ public class TerminalToolsFacade {
             @P("The path to the file") String filePath,
             @P("The regex pattern to search for (supports MULTILINE and DOTALL)") String regex,
             @P("The new content to replace the matched regex with") String replacement) {
-        if (!security.requestPermission("regex patch", filePath)) {
-            return "User denied regex patch.";
-        }
-        return fileService.regexReplaceInFile(filePath, regex, replacement);
+        return com.agent.telemetry.SwarmTelemetry.executeTool("regexReplaceInFile",
+                com.agent.telemetry.SwarmTelemetry.formatArgs("filePath", filePath, "regex", regex, "replacement", replacement),
+                () -> {
+                    if (!security.requestPermission("regex patch", filePath)) {
+                        return "User denied regex patch.";
+                    }
+                    return fileService.regexReplaceInFile(filePath, regex, replacement);
+                });
     }
 }

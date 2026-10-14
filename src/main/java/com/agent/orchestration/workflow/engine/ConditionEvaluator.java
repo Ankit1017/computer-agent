@@ -68,12 +68,31 @@ public class ConditionEvaluator {
             return false;
         }
         String trimmed = condition.trim();
+        java.util.List<String> missingKeys = new java.util.ArrayList<>();
+        boolean result = evaluateExpression(trimmed, data, missingKeys);
 
+        com.agent.telemetry.SwarmSpan span = com.agent.telemetry.SwarmTelemetry.currentSpan();
+        if (span != null) {
+            Map<String, Object> eventAttrs = new java.util.LinkedHashMap<>();
+            eventAttrs.put("condition", condition);
+            eventAttrs.put("result", result);
+            if (!missingKeys.isEmpty()) {
+                eventAttrs.put("missing_state_keys", String.join(", ", missingKeys));
+                eventAttrs.put("warning", "State keys referenced in condition but absent from WorkflowState: " + missingKeys);
+                log.debug("[CONDITION-EVALUATOR] Condition '{}' referenced missing state keys: {}", condition, missingKeys);
+            }
+            span.addEvent("condition.evaluated", eventAttrs);
+        }
+
+        return result;
+    }
+
+    private boolean evaluateExpression(String trimmed, Map<String, Object> data, java.util.List<String> missingKeys) {
         // 1. Logical OR (||)
         if (trimmed.contains("||")) {
             String[] clauses = trimmed.split("\\|\\|");
             for (String clause : clauses) {
-                if (evaluateSingleClause(clause.trim(), data)) {
+                if (evaluateSingleClause(clause.trim(), data, missingKeys)) {
                     return true;
                 }
             }
@@ -84,17 +103,17 @@ public class ConditionEvaluator {
         if (trimmed.contains("&&")) {
             String[] clauses = trimmed.split("&&");
             for (String clause : clauses) {
-                if (!evaluateSingleClause(clause.trim(), data)) {
+                if (!evaluateSingleClause(clause.trim(), data, missingKeys)) {
                     return false;
                 }
             }
             return true;
         }
 
-        return evaluateSingleClause(trimmed, data);
+        return evaluateSingleClause(trimmed, data, missingKeys);
     }
 
-    private boolean evaluateSingleClause(String clause, Map<String, Object> data) {
+    private boolean evaluateSingleClause(String clause, Map<String, Object> data, java.util.List<String> missingKeys) {
         if (clause.isBlank()) {
             return false;
         }
@@ -105,6 +124,9 @@ public class ConditionEvaluator {
             String key = methodMatcher.group(1) != null ? methodMatcher.group(1) : methodMatcher.group(2);
             String method = methodMatcher.group(3);
             String expected = methodMatcher.group(4);
+            if (data == null || !data.containsKey(key)) {
+                missingKeys.add(key);
+            }
             Object actual = data != null ? data.get(key) : null;
 
             if (actual == null) {
@@ -126,6 +148,9 @@ public class ConditionEvaluator {
             String key = opMatcher.group(1) != null ? opMatcher.group(1) : opMatcher.group(2);
             String operator = opMatcher.group(3);
             String rightExpr = opMatcher.group(4).trim();
+            if (data == null || !data.containsKey(key)) {
+                missingKeys.add(key);
+            }
             Object actual = data != null ? data.get(key) : null;
 
             return evaluateOperator(actual, operator, rightExpr);
@@ -134,10 +159,16 @@ public class ConditionEvaluator {
         // 3. Unary check: !hasErrors or hasErrors
         if (clause.startsWith("!")) {
             String key = clause.substring(1).trim();
+            if (data == null || !data.containsKey(key)) {
+                missingKeys.add(key);
+            }
             Object val = data != null ? data.get(key) : null;
             return !isTruthy(val);
         }
 
+        if (data == null || !data.containsKey(clause)) {
+            missingKeys.add(clause);
+        }
         Object val = data != null ? data.get(clause) : null;
         return isTruthy(val);
     }

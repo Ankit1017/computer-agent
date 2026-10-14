@@ -48,7 +48,8 @@ public class OrchestratorPromptBuilder {
                 "1. Dynamic Delegation Tools ('delegateTask', 'delegateParallel'): Used for ad-hoc, single-step, or independent parallel sub-agent tasks.\n" +
                 "2. Deterministic Workflow Tools ('listAvailableWorkflows', 'executeWorkflow', 'resumeWorkflow'): Used for multi-step structured pipelines, catalog queries, and resuming suspended workflow runs.\n" +
                 "3. Runtime Builder Tools ('listAvailableAgents', 'createCustomAgent', 'createCustomSequence', 'createCustomWorkflow'): Used to query agent profiles, dynamically create custom specialist agents, build linear sequence workflows, and register custom DAG workflows on the fly.\n" +
-                "You DO NOT have direct access to tools like listDirectory, readFile, writeTemporaryData, or executeCommand. You MUST ALWAYS call delegation tools, workflow tools, or builder tools.\n\n" +
+                "4. Telemetry & Observability Tools ('getTelemetrySummary', 'getRecentTraces'): Used to inspect distributed OpenTelemetry traces, token consumption, execution latencies, and span hierarchies across the swarm.\n" +
+                "You DO NOT have direct access to tools like listDirectory, readFile, writeTemporaryData, or executeCommand. You MUST ALWAYS call delegation tools, workflow tools, builder tools, or telemetry tools.\n\n" +
                 "HYBRID INTENT ROUTING DIRECTIVES:\n" +
                 "A. DETERMINISTIC WORKFLOW ROUTING:\n" +
                 "   - When the user asks what workflows or pipelines exist or are available, invoke 'listAvailableWorkflows'.\n" +
@@ -61,7 +62,9 @@ public class OrchestratorPromptBuilder {
                 "   - When the user asks to create or spawn a new custom specialist agent, invoke 'createCustomAgent'.\n" +
                 "   - When the user asks to create or chain a linear sequence of tasks, invoke 'createCustomSequence'.\n" +
                 "   - When the user asks to define, construct, or register a custom DAG workflow or branching pipeline, invoke 'createCustomWorkflow'.\n" +
-                "   - After creating any custom sequence or workflow, you can immediately execute it via 'executeWorkflow'!\n\n" +
+                "   - After creating any custom sequence or workflow, you can immediately execute it via 'executeWorkflow'!\n" +
+                "D. TELEMETRY & OBSERVABILITY ROUTING:\n" +
+                "   - When the user asks for token consumption, execution latency, swarm metrics, or diagnostic trace history, invoke 'getTelemetrySummary' or 'getRecentTraces'.\n\n" +
                 "STRICT WORKFLOW HUMAN-IN-THE-LOOP (HITL) & ANTI-LOOPING RULES:\n" +
                 "1. When 'executeWorkflow' or 'resumeWorkflow' returns a status of 'SUSPENDED' at an interrupt breakpoint, DO NOT automatically call 'resumeWorkflow' on your own.\n" +
                 "2. You MUST halt execution and report the 'threadId', the interrupted/paused node(s), and the current state snapshot back to the human user, explicitly asking for their review, approval, or state updates.\n" +
@@ -92,7 +95,8 @@ public class OrchestratorPromptBuilder {
                 .append(" - 'web': contains searchWeb, readWebPage, analyzeWebPage, clickWebElement, fillWebInput, readCurrentWebPage. Assigned ONLY to: researcher.\n")
                 .append(" - 'vision': contains inspectScreen, clickGridId, clickGridOffset, doubleClickGridId, rightClickGridId, scrollMouse, typeText, pressHotkey. Assigned ONLY to: gui_tester.\n")
                 .append(" - 'memory': contains storeFact, searchMemory. Assigned to: architect, developer, researcher.\n")
-                .append(" - 'context': contains writeToBlackboard, writeToNamespacedBlackboard, writeTemporaryData, readFromBlackboard, readFromNamespacedBlackboard, listBlackboardKeys. Assigned to all agents.\n\n")
+                .append(" - 'context': contains writeToBlackboard, writeToNamespacedBlackboard, writeTemporaryData, readFromBlackboard, readFromNamespacedBlackboard, listBlackboardKeys. Assigned to all agents.\n")
+                .append(" - 'telemetry': contains getTelemetrySummary, getRecentTraces. Exposes distributed traces and token usage across the swarm.\n\n")
                 .append("CRITICAL DELEGATION RULES:\n")
                 .append("0. EXACT PATH PRESERVATION: When extracting file or directory paths from user input, ALWAYS preserve the exact path string verbatim, character-for-character. If a path contains spaces or special characters (for example: 'E:\\projects\\projects for shown\\ads_selector'), NEVER drop, truncate, or omit words from the path. Always pass the exact verbatim path unchanged.\n")
                 .append("1. EXPLAINING OR ANALYZING A PROJECT: When the user asks to explain a project or inspect code (e.g. 'explain me about this project E:\\...'):\n")

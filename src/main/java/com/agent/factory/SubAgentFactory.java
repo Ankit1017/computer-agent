@@ -27,8 +27,12 @@ public class SubAgentFactory {
     private static final Logger log = LoggerFactory.getLogger(SubAgentFactory.class);
 
     public static final Set<String> VALID_TOOL_CATEGORIES = Set.of(
-            "terminal", "git", "web", "memory", "context", "vision"
+            "terminal", "git", "web", "memory", "context", "vision", "telemetry"
     );
+
+    public static final int DEFAULT_MAX_MEMORY_WINDOWS = 1000;
+    private final int maxMemoryWindows;
+    private final Map<Object, ChatMemory> chatMemories = new LinkedHashMap<>(16, 0.75f, true);
 
     private final ChatLanguageModel chatModel;
     private final ToolRegistry toolRegistry;
@@ -45,7 +49,7 @@ public class SubAgentFactory {
      * @param toolRegistry the centralized tool registry to resolve tool dependencies
      */
     public SubAgentFactory(ChatLanguageModel chatModel, ToolRegistry toolRegistry) {
-        this(chatModel, toolRegistry, null, new ObjectMapper());
+        this(chatModel, toolRegistry, null, new ObjectMapper(), DEFAULT_MAX_MEMORY_WINDOWS);
     }
 
     /**
@@ -56,7 +60,7 @@ public class SubAgentFactory {
      * @param customAgentsPath optional path to persist and load custom agents
      */
     public SubAgentFactory(ChatLanguageModel chatModel, ToolRegistry toolRegistry, Path customAgentsPath) {
-        this(chatModel, toolRegistry, customAgentsPath, new ObjectMapper());
+        this(chatModel, toolRegistry, customAgentsPath, new ObjectMapper(), DEFAULT_MAX_MEMORY_WINDOWS);
     }
 
     /**
@@ -68,10 +72,24 @@ public class SubAgentFactory {
      * @param objectMapper     custom ObjectMapper instance
      */
     public SubAgentFactory(ChatLanguageModel chatModel, ToolRegistry toolRegistry, Path customAgentsPath, ObjectMapper objectMapper) {
+        this(chatModel, toolRegistry, customAgentsPath, objectMapper, DEFAULT_MAX_MEMORY_WINDOWS);
+    }
+
+    /**
+     * Creates a new SubAgentFactory with optional disk persistence, custom ObjectMapper, and bounded memory capacity.
+     *
+     * @param chatModel        the chat language model used by spawned agents
+     * @param toolRegistry     the centralized tool registry to resolve tool dependencies
+     * @param customAgentsPath optional path to persist and load custom agents
+     * @param objectMapper     custom ObjectMapper instance
+     * @param maxMemoryWindows maximum active @MemoryId windows before oldest-entry eviction
+     */
+    public SubAgentFactory(ChatLanguageModel chatModel, ToolRegistry toolRegistry, Path customAgentsPath, ObjectMapper objectMapper, int maxMemoryWindows) {
         this.chatModel = Objects.requireNonNull(chatModel, "chatModel must not be null");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry must not be null");
         this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
         this.customAgentsPath = customAgentsPath;
+        this.maxMemoryWindows = maxMemoryWindows > 0 ? maxMemoryWindows : DEFAULT_MAX_MEMORY_WINDOWS;
         if (this.customAgentsPath != null) {
             loadCustomAgents();
         }
@@ -135,6 +153,151 @@ public class SubAgentFactory {
     }
 
     /**
+     * Delegating ChatMemory implementation allowing SubAgentFactory to manage eviction and bounding.
+     */
+    public static class DelegatingChatMemory implements ChatMemory {
+        private final Object id;
+        private final SubAgentFactory factory;
+
+        public DelegatingChatMemory(Object id, SubAgentFactory factory) {
+            this.id = id;
+            this.factory = factory;
+        }
+
+        @Override
+        public Object id() {
+            return id;
+        }
+
+        @Override
+        public void add(dev.langchain4j.data.message.ChatMessage message) {
+            factory.getOrCreateDelegate(id).add(message);
+        }
+
+        @Override
+        public List<dev.langchain4j.data.message.ChatMessage> messages() {
+            ChatMemory delegate = factory.getDelegateOrNull(id);
+            return delegate != null ? delegate.messages() : Collections.emptyList();
+        }
+
+        @Override
+        public void clear() {
+            factory.evictMemory(id);
+        }
+    }
+
+    /**
+     * Retrieves or creates a bounded MessageWindowChatMemory delegate for the specified memoryId.
+     */
+    public synchronized ChatMemory getOrCreateDelegate(Object memoryId) {
+        Object key = memoryId != null ? memoryId : "default";
+        ChatMemory existing = chatMemories.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        while (chatMemories.size() >= maxMemoryWindows && !chatMemories.isEmpty()) {
+            Iterator<Map.Entry<Object, ChatMemory>> it = chatMemories.entrySet().iterator();
+            if (it.hasNext()) {
+                Map.Entry<Object, ChatMemory> oldest = it.next();
+                it.remove();
+                if (oldest.getValue() != null) {
+                    oldest.getValue().clear();
+                }
+                log.debug("[SUB-AGENT-FACTORY] Evicted oldest chat memory window: '{}'", oldest.getKey());
+            }
+        }
+        ChatMemory newMem = MessageWindowChatMemory.builder()
+                .id(key)
+                .maxMessages(10)
+                .build();
+        chatMemories.put(key, newMem);
+        return newMem;
+    }
+
+    /**
+     * Retrieves the ChatMemory delegate for the given memoryId, or null if not yet created or evicted.
+     */
+    public synchronized ChatMemory getDelegateOrNull(Object memoryId) {
+        Object key = memoryId != null ? memoryId : "default";
+        return chatMemories.get(key);
+    }
+
+    /**
+     * Evicts and clears chat memory for a specific memoryId.
+     *
+     * @param memoryId unique session or node memory key
+     * @return true if an entry was removed, false otherwise
+     */
+    public synchronized boolean evictMemory(Object memoryId) {
+        if (memoryId == null) {
+            return false;
+        }
+        boolean removed = false;
+        ChatMemory direct = chatMemories.remove(memoryId);
+        if (direct != null) {
+            direct.clear();
+            removed = true;
+        }
+        String memStr = String.valueOf(memoryId);
+        List<Object> toRemove = new ArrayList<>();
+        for (Object key : chatMemories.keySet()) {
+            String strKey = String.valueOf(key);
+            if (strKey.equals(memStr) || strKey.endsWith("#" + memStr)) {
+                toRemove.add(key);
+            }
+        }
+        for (Object k : toRemove) {
+            ChatMemory mem = chatMemories.remove(k);
+            if (mem != null) {
+                mem.clear();
+                removed = true;
+            }
+        }
+        if (removed) {
+            log.debug("[SUB-AGENT-FACTORY] Evicted chat memory for memoryId: '{}'", memoryId);
+        }
+        return removed;
+    }
+
+    /**
+     * Evicts and clears all chat memory windows whose key starts with the given prefix (e.g. "threadId:").
+     *
+     * @param prefix key prefix to match
+     * @return number of evicted memory windows
+     */
+    public synchronized int evictMemoryByPrefix(String prefix) {
+        if (prefix == null || prefix.isBlank()) {
+            return 0;
+        }
+        List<Object> toRemove = new ArrayList<>();
+        for (Object key : chatMemories.keySet()) {
+            String strKey = String.valueOf(key);
+            if (strKey.startsWith(prefix) || strKey.contains("#" + prefix) || strKey.contains(":" + prefix)) {
+                toRemove.add(key);
+            }
+        }
+        int count = 0;
+        for (Object k : toRemove) {
+            ChatMemory mem = chatMemories.remove(k);
+            if (mem != null) {
+                mem.clear();
+                count++;
+            }
+        }
+        if (count > 0) {
+            log.info("[SUB-AGENT-FACTORY] Evicted {} chat memory window(s) matching prefix '{}'", count, prefix);
+        }
+        return count;
+    }
+
+    /**
+     * Returns the current number of cached active @MemoryId windows.
+     */
+    public synchronized int getActiveMemoryCount() {
+        return chatMemories.size();
+    }
+
+    /**
      * Creates an isolated WorkerAgent instance configured according to the provided AgentConfig.
      *
      * @param config the sub-agent specification
@@ -146,13 +309,11 @@ public class SubAgentFactory {
         log.info("Creating WorkerAgent: '{}' (id: '{}')", config.name(), config.id());
 
         Object[] tools = toolRegistry.getTools(config.tools());
+        final String agentId = config.id() != null ? config.id().trim().toLowerCase() : "agent";
 
         var builder = AiServices.builder(InternalWorkerService.class)
                 .chatLanguageModel(chatModel)
-                .chatMemoryProvider(memoryId -> MessageWindowChatMemory.builder()
-                        .id(memoryId)
-                        .maxMessages(10)
-                        .build())
+                .chatMemoryProvider(memoryId -> new DelegatingChatMemory(agentId + "#" + memoryId, this))
                 .systemMessageProvider(chatMemoryId -> config.systemMessage());
 
         if (tools != null && tools.length > 0) {

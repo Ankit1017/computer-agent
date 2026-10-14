@@ -73,6 +73,7 @@ public class WorkflowEngine {
     private final WorkflowCheckpointer checkpointer;
     private final ObjectMapper objectMapper;
     private java.util.function.Function<String, com.agent.config.AgentConfig> configResolver;
+    private SubAgentFactory agentFactory;
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker) {
         this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
@@ -104,26 +105,31 @@ public class WorkflowEngine {
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory) {
         this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+        this.agentFactory = agentFactory;
         this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowCheckpointer checkpointer) {
         this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
+        this.agentFactory = agentFactory;
         this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, Duration stepTimeout) {
         this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), stepTimeout, null);
+        this.agentFactory = agentFactory;
         this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowState state) {
         this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+        this.agentFactory = agentFactory;
         this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowState state, WorkflowCheckpointer checkpointer) {
         this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
+        this.agentFactory = agentFactory;
         this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
@@ -570,7 +576,12 @@ public class WorkflowEngine {
                         completedNodeIds
                 );
                 checkpointer.save(rolledBackCheckpoint);
-                log.info("[WORKFLOW-SAGA] Saved ROLLED_BACK checkpoint for thread '{}'. Throwing WorkflowSagaRollbackException.", threadId);
+                log.info("[WORKFLOW-SAGA] Saved ROLLED_BACK checkpoint for thread '{}'. Evicting memory and throwing WorkflowSagaRollbackException.", threadId);
+
+                agentInvoker.evictMemory(threadId);
+                if (agentFactory != null) {
+                    agentFactory.evictMemoryByPrefix(threadId + ":");
+                }
 
                 throw new WorkflowSagaRollbackException(
                         threadId,
@@ -632,8 +643,13 @@ public class WorkflowEngine {
                 } // end of try superstepSpan
             } // end of while loop
 
-            log.info("[WORKFLOW] Workflow '{}' (threadId='{}') terminated successfully in {} superstep(s).",
+            log.info("[WORKFLOW] Workflow '{}' (threadId='{}') terminated successfully in {} superstep(s). Evicting memory.",
                     graph.workflowId(), threadId, superstepCount);
+
+            agentInvoker.evictMemory(threadId);
+            if (agentFactory != null) {
+                agentFactory.evictMemoryByPrefix(threadId + ":");
+            }
 
             return state;
         } catch (Throwable t) {
@@ -909,6 +925,13 @@ public class WorkflowEngine {
             @Override
             public com.agent.config.AgentConfig getConfig(String agentId) {
                 return agentFactory.getConfig(agentId);
+            }
+
+            @Override
+            public void evictMemory(String threadId) {
+                if (threadId != null && !threadId.isBlank()) {
+                    agentFactory.evictMemoryByPrefix(threadId + ":");
+                }
             }
         };
     }

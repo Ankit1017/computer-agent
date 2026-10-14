@@ -139,6 +139,13 @@ public class WorkflowRegistryService {
                 }
                 return null;
             }
+
+            @Override
+            public void evictMemory(String threadId) {
+                if (orchestrationService != null && orchestrationService.getAgentFactory() != null && threadId != null && !threadId.isBlank()) {
+                    orchestrationService.getAgentFactory().evictMemoryByPrefix(threadId + ":");
+                }
+            }
         };
     }
 
@@ -526,6 +533,7 @@ public class WorkflowRegistryService {
         } catch (WorkflowSagaRollbackException e) {
             log.warn("[REGISTRY] Workflow '{}' failed and was rolled back via Saga in thread '{}': {}",
                     graph.workflowId(), resolvedThreadId, e.getMessage());
+            agentInvoker.evictMemory(resolvedThreadId);
             WorkflowCheckpoint rollbackCheckpoint = checkpointer.loadLatest(resolvedThreadId).orElse(null);
             Map<String, Object> finalData = e.getFinalState() != null ? e.getFinalState().getData()
                     : (rollbackCheckpoint != null ? rollbackCheckpoint.stateData() : state.getData());
@@ -545,6 +553,10 @@ public class WorkflowRegistryService {
         WorkflowExecutionStatus status = (latestCheckpoint != null && latestCheckpoint.status() != null)
                 ? latestCheckpoint.status()
                 : WorkflowExecutionStatus.COMPLETED;
+
+        if (status == WorkflowExecutionStatus.COMPLETED || status == WorkflowExecutionStatus.ROLLED_BACK) {
+            agentInvoker.evictMemory(resolvedThreadId);
+        }
 
         Set<String> interruptedNodes = (latestCheckpoint != null)
                 ? latestCheckpoint.interruptedNodes()
@@ -606,6 +618,7 @@ public class WorkflowRegistryService {
         } catch (WorkflowSagaRollbackException e) {
             log.warn("[REGISTRY] Resumed workflow '{}' failed and was rolled back via Saga in thread '{}': {}",
                     graph.workflowId(), resolvedThreadId, e.getMessage());
+            agentInvoker.evictMemory(resolvedThreadId);
             WorkflowCheckpoint rollbackCheckpoint = checkpointer.loadLatest(resolvedThreadId).orElse(null);
             Map<String, Object> finalData = e.getFinalState() != null ? e.getFinalState().getData()
                     : (rollbackCheckpoint != null ? rollbackCheckpoint.stateData() : state.getData());
@@ -625,6 +638,10 @@ public class WorkflowRegistryService {
         WorkflowExecutionStatus status = (latestCheckpoint != null && latestCheckpoint.status() != null)
                 ? latestCheckpoint.status()
                 : WorkflowExecutionStatus.COMPLETED;
+
+        if (status == WorkflowExecutionStatus.COMPLETED || status == WorkflowExecutionStatus.ROLLED_BACK) {
+            agentInvoker.evictMemory(resolvedThreadId);
+        }
 
         Set<String> interruptedNodes = (latestCheckpoint != null)
                 ? latestCheckpoint.interruptedNodes()
