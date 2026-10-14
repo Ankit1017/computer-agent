@@ -1,3 +1,0 @@
-Line 1: Initial System State
-Line 2: Server Port 5000
-Line 3: Java Target Pending

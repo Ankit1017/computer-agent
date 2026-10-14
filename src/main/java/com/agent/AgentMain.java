@@ -66,8 +66,7 @@ public class AgentMain {
             registerShutdownHook(navService, blackboardService, orchestrationService);
             WorkerAgent orchestrator = buildOrchestrator(model, orchestrationService, configs);
 
-            // 5. Prepare Environment & Start CLI
-            prepareDummyFiles();
+            // 5. Start CLI
             runCliLoop(scanner, orchestrator, swarm);
 
         } catch (Exception e) {
@@ -141,15 +140,6 @@ public class AgentMain {
                 .tools(delegationFacade)
                 .systemMessageProvider(chatMemoryId -> managerPrompt)
                 .build();
-    }
-
-    private static void prepareDummyFiles() {
-        try {
-            Path dummyPath = Paths.get("dummy.txt");
-            Files.writeString(dummyPath, "Line 1: Initial System State\nLine 2: Server Port 5000\nLine 3: Java Target Pending\n");
-        } catch (Exception e) {
-            log.warn("Could not create dummy.txt", e);
-        }
     }
 
     private static void runCliLoop(Scanner scanner, WorkerAgent orchestrator, Map<String, WorkerAgent> swarm) {
