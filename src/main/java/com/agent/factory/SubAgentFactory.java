@@ -128,6 +128,13 @@ public class SubAgentFactory {
     }
 
     /**
+     * Internal AI service interface for LangChain4j proxy generation supporting memory isolation via @MemoryId.
+     */
+    public interface InternalWorkerService {
+        String execute(@dev.langchain4j.service.MemoryId Object memoryId, @dev.langchain4j.service.UserMessage String task);
+    }
+
+    /**
      * Creates an isolated WorkerAgent instance configured according to the provided AgentConfig.
      *
      * @param config the sub-agent specification
@@ -139,14 +146,33 @@ public class SubAgentFactory {
         log.info("Creating WorkerAgent: '{}' (id: '{}')", config.name(), config.id());
 
         Object[] tools = toolRegistry.getTools(config.tools());
-        ChatMemory memory = MessageWindowChatMemory.withMaxMessages(10);
 
-        WorkerAgent agent = AiServices.builder(WorkerAgent.class)
+        var builder = AiServices.builder(InternalWorkerService.class)
                 .chatLanguageModel(chatModel)
-                .chatMemory(memory)
-                .tools(tools)
-                .systemMessageProvider(chatMemoryId -> config.systemMessage())
-                .build();
+                .chatMemoryProvider(memoryId -> MessageWindowChatMemory.builder()
+                        .id(memoryId)
+                        .maxMessages(10)
+                        .build())
+                .systemMessageProvider(chatMemoryId -> config.systemMessage());
+
+        if (tools != null && tools.length > 0) {
+            builder.tools(tools);
+        }
+
+        InternalWorkerService internalService = builder.build();
+
+        WorkerAgent agent = new WorkerAgent() {
+            @Override
+            public String execute(String task) {
+                return internalService.execute("default", task);
+            }
+
+            @Override
+            public String execute(Object memoryId, String task) {
+                Object resolved = (memoryId != null) ? memoryId : "default";
+                return internalService.execute(resolved, task);
+            }
+        };
 
         String normalizedId = config.id().trim().toLowerCase();
         configs.put(normalizedId, config);

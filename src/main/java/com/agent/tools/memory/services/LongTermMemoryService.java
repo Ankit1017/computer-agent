@@ -1,11 +1,13 @@
 package com.agent.tools.memory.services;
 
+import com.agent.factory.EmbeddingModelFactory;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 
@@ -20,7 +22,7 @@ public class LongTermMemoryService {
     public LongTermMemoryService() {
         System.out.println("[MEMORY] Initializing Semantic Memory (ChromaDB)...");
         try {
-            this.embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+            this.embeddingModel = EmbeddingModelFactory.getSharedModel();
             this.embeddingStore = ChromaEmbeddingStore.builder()
                     .baseUrl("http://localhost:8000")
                     .collectionName("swarm_memory")
@@ -66,11 +68,14 @@ public class LongTermMemoryService {
             return "Error: Query cannot be empty.";
         }
         try {
-            List<EmbeddingMatch<TextSegment>> matches = embeddingStore.findRelevant(
-                    embeddingModel.embed(query.trim()).content(),
-                    3, // Return top 3 most relevant facts
-                    0.5 // Minimum relevance score
-            );
+            EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+                    .queryEmbedding(embeddingModel.embed(query.trim()).content())
+                    .maxResults(3)
+                    .minScore(0.5)
+                    .build();
+
+            EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(request);
+            List<EmbeddingMatch<TextSegment>> matches = searchResult != null ? searchResult.matches() : List.of();
 
             if (matches == null || matches.isEmpty()) {
                 return "No highly relevant information found in long-term memory for query: '" + query + "'";

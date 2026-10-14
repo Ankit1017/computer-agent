@@ -1,10 +1,10 @@
 package com.agent.tools.web.services;
 
+import com.agent.factory.EmbeddingModelFactory;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingSearchResult;
@@ -17,8 +17,8 @@ public class WebAnalysisService {
     private final EmbeddingModel embeddingModel;
 
     public WebAnalysisService() {
-        // Fast, local in-process ONNX embedding model
-        this.embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+        // Fast, local in-process ONNX embedding model shared instance
+        this.embeddingModel = EmbeddingModelFactory.getSharedModel();
     }
 
     public WebAnalysisService(EmbeddingModel embeddingModel) {

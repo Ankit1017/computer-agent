@@ -20,6 +20,19 @@ public interface WorkflowAgentInvoker {
     String invoke(String agentId, String prompt);
 
     /**
+     * Dispatches a prompt to the specified agent with an isolated execution memory context.
+     * Prevents cross-thread context contamination during concurrent Virtual Thread executions.
+     *
+     * @param agentId  identifier of the sub-agent (e.g., "researcher", "architect")
+     * @param prompt   fully formatted prompt including active workflow state context
+     * @param memoryId unique session or execution thread identifier
+     * @return textual response from the agent
+     */
+    default String invoke(String agentId, String prompt, Object memoryId) {
+        return invoke(agentId, prompt);
+    }
+
+    /**
      * Retrieves optional configuration and contract metadata for the specified agent.
      *
      * @param agentId identifier of the sub-agent

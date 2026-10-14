@@ -392,10 +392,12 @@ public class WorkflowEngine {
                                     "Node '" + nodeId + "' does not exist in workflow '" + graph.workflowId() + "'"
                             ));
 
+                    final int currentSuperstep = superstepCount;
                     CompletableFuture<Map<String, Object>> future = CompletableFuture.supplyAsync(() -> {
                         log.info("[WORKFLOW] [Task] Node '{}' dispatched to agent '{}'", node.nodeId(), node.agentId());
                         String prompt = formatPrompt(node, stateSnapshot);
-                        String rawResponse = agentInvoker.invoke(node.agentId(), prompt);
+                        String memoryId = threadId + ":" + node.nodeId() + ":step" + currentSuperstep;
+                        String rawResponse = agentInvoker.invoke(node.agentId(), prompt, memoryId);
                         return outputParser.parseOutput(rawResponse, node.nodeId() + "_output");
                     }, executor);
 
@@ -493,7 +495,8 @@ public class WorkflowEngine {
 
                     try {
                         String compensationPrompt = formatCompensationPrompt(node, state.getData());
-                        String compRawResponse = agentInvoker.invoke(compAgentId, compensationPrompt);
+                        String compMemoryId = threadId + ":" + node.nodeId() + ":compensation";
+                        String compRawResponse = agentInvoker.invoke(compAgentId, compensationPrompt, compMemoryId);
                         Map<String, Object> rawUpdate = outputParser.parseOutput(compRawResponse, node.nodeId() + "_compensation");
                         Map<String, Object> firewalled = filterWriteUpdate(node, rawUpdate);
                         if (firewalled != null && !firewalled.isEmpty()) {
@@ -840,6 +843,15 @@ public class WorkflowEngine {
                     throw new IllegalArgumentException("SubAgentFactory contains no registered agent for id '" + agentId + "'");
                 }
                 return agent.execute(prompt);
+            }
+
+            @Override
+            public String invoke(String agentId, String prompt, Object memoryId) {
+                WorkerAgent agent = agentFactory.getAgent(agentId);
+                if (agent == null) {
+                    throw new IllegalArgumentException("SubAgentFactory contains no registered agent for id '" + agentId + "'");
+                }
+                return agent.execute(memoryId, prompt);
             }
 
             @Override

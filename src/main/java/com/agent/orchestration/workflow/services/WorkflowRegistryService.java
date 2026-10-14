@@ -128,6 +128,11 @@ public class WorkflowRegistryService {
             }
 
             @Override
+            public String invoke(String agentId, String taskPrompt, Object memoryId) {
+                return orchestrationService.routeTask(agentId, taskPrompt, memoryId);
+            }
+
+            @Override
             public com.agent.config.AgentConfig getConfig(String agentId) {
                 if (orchestrationService.getAgentFactory() != null) {
                     return orchestrationService.getAgentFactory().getConfig(agentId);

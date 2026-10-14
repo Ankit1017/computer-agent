@@ -28,8 +28,12 @@ public class OrchestrationService implements AutoCloseable {
     }
 
     public String routeTask(String agentId, String task) {
-        System.out.println("[ORCHESTRATOR] Routing task to '" + agentId + "': " + task);
-        return executeWithRetry(agentId, task, 2); // 2 max attempts for standard routes
+        return routeTask(agentId, task, null);
+    }
+
+    public String routeTask(String agentId, String task, Object memoryId) {
+        System.out.println("[ORCHESTRATOR] Routing task to '" + agentId + "'" + (memoryId != null ? " (memoryId=" + memoryId + ")" : "") + ": " + task);
+        return executeWithRetry(agentId, task, memoryId, 2); // 2 max attempts for standard routes
     }
 
     public String routeParallelTasks(String agentId1, String task1, String agentId2, String task2) {
@@ -43,10 +47,10 @@ public class OrchestrationService implements AutoCloseable {
         }
 
         CompletableFuture<String> future1 = CompletableFuture.supplyAsync(() -> 
-            "=== Response from " + agentId1 + " ===\n" + executeWithRetry(agentId1, task1, 1), vThreadExecutor);
+            "=== Response from " + agentId1 + " ===\n" + executeWithRetry(agentId1, task1, null, 1), vThreadExecutor);
             
         CompletableFuture<String> future2 = CompletableFuture.supplyAsync(() -> 
-            "=== Response from " + agentId2 + " ===\n" + executeWithRetry(agentId2, task2, 1), vThreadExecutor);
+            "=== Response from " + agentId2 + " ===\n" + executeWithRetry(agentId2, task2, null, 1), vThreadExecutor);
 
         try {
             // Wait for both virtual threads to complete with a 120s timeout safeguard
@@ -61,7 +65,7 @@ public class OrchestrationService implements AutoCloseable {
         }
     }
 
-    private String executeWithRetry(String agentId, String task, int maxAttempts) {
+    private String executeWithRetry(String agentId, String task, Object memoryId, int maxAttempts) {
         if (agentId == null || agentId.isBlank()) {
             return "Error: Agent ID cannot be empty.";
         }
@@ -89,7 +93,9 @@ public class OrchestrationService implements AutoCloseable {
                                   "YOUR TASK:\n" + task;
                 }
 
-                String response = agent.execute(finalPrompt);
+                String response = (memoryId != null)
+                        ? agent.execute(memoryId, finalPrompt)
+                        : agent.execute(finalPrompt);
                 int responseLength = (response != null) ? response.length() : 0;
                 System.out.println("[main] INFO OrchestrationService - Agent '" + agentId + "' completed task. Response length: " + responseLength);
                 return response != null ? response : "";
