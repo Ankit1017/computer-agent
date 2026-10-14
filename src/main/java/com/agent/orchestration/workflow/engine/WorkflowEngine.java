@@ -580,7 +580,7 @@ public class WorkflowEngine {
                 "containing the key-value updates to merge into the workflow state.";
     }
 
-    private static WorkflowAgentInvoker adaptAgentFactory(SubAgentFactory agentFactory) {
+    public static WorkflowAgentInvoker adaptAgentFactory(SubAgentFactory agentFactory) {
         Objects.requireNonNull(agentFactory, "agentFactory must not be null");
         return (agentId, prompt) -> {
             WorkerAgent agent = agentFactory.getAgent(agentId);
