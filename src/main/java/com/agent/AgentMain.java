@@ -6,6 +6,9 @@ import com.agent.factory.SubAgentFactory;
 import com.agent.orchestration.DelegationFacade;
 import com.agent.orchestration.OrchestratorPromptBuilder;
 import com.agent.orchestration.services.OrchestrationService;
+import com.agent.orchestration.workflow.WorkflowToolsFacade;
+import com.agent.orchestration.workflow.checkpoint.JsonFileCheckpointer;
+import com.agent.orchestration.workflow.services.WorkflowRegistryService;
 import com.agent.registry.ToolRegistry;
 import com.agent.tools.context.ContextToolsFacade;
 import com.agent.tools.context.services.BlackboardService;
@@ -34,7 +37,6 @@ import org.slf4j.LoggerFactory;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +47,7 @@ public class AgentMain {
     private static final Logger log = LoggerFactory.getLogger(AgentMain.class);
 
     public static void main(String[] args) {
-        log.info("Starting Computer Agent - Milestone 9.0.5.0 Swarm Orchestrator Active");
+        log.info("Starting Computer Agent - Milestone 10.4.2 Hybrid Swarm Orchestrator Active");
 
         try (Scanner scanner = new Scanner(System.in)) {
             // 1. Core Services & Shutdown
@@ -61,13 +63,17 @@ public class AgentMain {
             List<AgentConfig> configs = loadAgentConfigs();
             Map<String, WorkerAgent> swarm = spawnSubAgents(configs, factory);
 
-            // 4. Build Orchestrator
+            // 4. Build Hybrid Orchestrator & Workflows
             OrchestrationService orchestrationService = new OrchestrationService(factory, blackboardService);
+            JsonFileCheckpointer checkpointer = new JsonFileCheckpointer(Path.of(".checkpoints"));
+            WorkflowRegistryService workflowRegistry = new WorkflowRegistryService(orchestrationService, checkpointer);
+            WorkflowToolsFacade workflowToolsFacade = new WorkflowToolsFacade(workflowRegistry);
+
             registerShutdownHook(navService, blackboardService, orchestrationService);
-            WorkerAgent orchestrator = buildOrchestrator(model, orchestrationService, configs);
+            WorkerAgent orchestrator = buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, workflowRegistry);
 
             // 5. Start CLI
-            runCliLoop(scanner, orchestrator, swarm);
+            runCliLoop(scanner, orchestrator, swarm, workflowRegistry);
 
         } catch (Exception e) {
             log.error("Fatal error during swarm orchestrator initialization", e);
@@ -130,22 +136,65 @@ public class AgentMain {
         return swarm;
     }
 
-    private static WorkerAgent buildOrchestrator(ChatLanguageModel model, OrchestrationService orchestrationService, List<AgentConfig> configs) {
-        DelegationFacade delegationFacade = new DelegationFacade(orchestrationService);
-        String managerPrompt = OrchestratorPromptBuilder.buildPrompt(configs);
+    public static WorkerAgent buildOrchestrator(
+            ChatLanguageModel model,
+            OrchestrationService orchestrationService,
+            List<AgentConfig> configs
+    ) {
+        WorkflowRegistryService dummyRegistry = new WorkflowRegistryService(orchestrationService);
+        WorkflowToolsFacade dummyFacade = new WorkflowToolsFacade(dummyRegistry);
+        return buildOrchestrator(model, orchestrationService, dummyFacade, configs, dummyRegistry);
+    }
 
-        return AiServices.builder(WorkerAgent.class)
+    public static WorkerAgent buildOrchestrator(
+            ChatLanguageModel model,
+            OrchestrationService orchestrationService,
+            WorkflowToolsFacade workflowToolsFacade,
+            List<AgentConfig> configs
+    ) {
+        return buildOrchestrator(model, orchestrationService, workflowToolsFacade, configs, null);
+    }
+
+    public static WorkerAgent buildOrchestrator(
+            ChatLanguageModel model,
+            OrchestrationService orchestrationService,
+            WorkflowToolsFacade workflowToolsFacade,
+            List<AgentConfig> configs,
+            WorkflowRegistryService workflowRegistry
+    ) {
+        DelegationFacade delegationFacade = new DelegationFacade(orchestrationService);
+        String managerPrompt = OrchestratorPromptBuilder.buildPrompt(configs, workflowRegistry);
+
+        var builder = AiServices.builder(WorkerAgent.class)
                 .chatLanguageModel(model)
                 .chatMemory(MessageWindowChatMemory.withMaxMessages(20))
-                .tools(delegationFacade)
-                .systemMessageProvider(chatMemoryId -> managerPrompt)
-                .build();
+                .systemMessageProvider(chatMemoryId -> managerPrompt);
+
+        if (workflowToolsFacade != null) {
+            builder.tools(delegationFacade, workflowToolsFacade);
+        } else {
+            builder.tools(delegationFacade);
+        }
+
+        return builder.build();
     }
 
     private static void runCliLoop(Scanner scanner, WorkerAgent orchestrator, Map<String, WorkerAgent> swarm) {
+        runCliLoop(scanner, orchestrator, swarm, null);
+    }
+
+    private static void runCliLoop(
+            Scanner scanner,
+            WorkerAgent orchestrator,
+            Map<String, WorkerAgent> swarm,
+            WorkflowRegistryService workflowRegistry
+    ) {
         System.out.println("=======================================================");
-        System.out.println("Swarm Orchestrator CLI Active");
+        System.out.println("Swarm Orchestrator CLI Active (Hybrid Mode)");
         System.out.println("Available Sub-Agents: " + swarm.keySet());
+        if (workflowRegistry != null && !workflowRegistry.listWorkflowIds().isEmpty()) {
+            System.out.println("Registered Workflows: " + workflowRegistry.listWorkflowIds());
+        }
         System.out.println("Type your prompt below. Type 'exit' or 'quit' to terminate.");
         System.out.println("=======================================================\n");
 

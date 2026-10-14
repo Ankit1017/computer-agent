@@ -1,25 +1,84 @@
 package com.agent.orchestration;
 
 import com.agent.config.AgentConfig;
+import com.agent.orchestration.workflow.services.WorkflowRegistryService;
+
+import java.util.Collections;
 import java.util.List;
 
+/**
+ * Builds the supervisor orchestrator's system prompt incorporating hybrid intent routing:
+ * dynamic delegation for ad-hoc tasks and deterministic workflow execution for structured pipelines.
+ */
 public class OrchestratorPromptBuilder {
 
+    /**
+     * Builds the standard orchestrator system prompt for backward compatibility.
+     *
+     * @param configs list of registered sub-agent configurations
+     * @return complete orchestrator system prompt string
+     */
     public static String buildPrompt(List<AgentConfig> configs) {
+        return buildPrompt(configs, Collections.emptyList());
+    }
+
+    /**
+     * Builds the orchestrator system prompt enriched with available workflows from the registry.
+     *
+     * @param configs         list of registered sub-agent configurations
+     * @param registryService central workflow registry service
+     * @return complete orchestrator system prompt string
+     */
+    public static String buildPrompt(List<AgentConfig> configs, WorkflowRegistryService registryService) {
+        List<String> workflowIds = registryService != null ? registryService.listWorkflowIds() : Collections.emptyList();
+        return buildPrompt(configs, workflowIds);
+    }
+
+    /**
+     * Builds the orchestrator system prompt enriched with explicitly declared workflow IDs.
+     *
+     * @param configs            list of registered sub-agent configurations
+     * @param availableWorkflows list of registered workflow identifiers
+     * @return complete orchestrator system prompt string
+     */
+    public static String buildPrompt(List<AgentConfig> configs, List<String> availableWorkflows) {
         StringBuilder managerPrompt = new StringBuilder(
-                "You are the Swarm Orchestrator. You do not have direct access to the OS, web, filesystem, or memory.\n" +
-                "CRITICAL: You ONLY have the tools: 'delegateTask' and 'delegateParallel'. You DO NOT have tools like listDirectory, readFile, writeTemporaryData, or executeCommand. You MUST ALWAYS call delegateTask or delegateParallel to have sub-agents perform actions.\n" +
-                "To fulfill the user's request, immediately delegate tasks to the appropriate sub-agents using delegateTask or delegateParallel.\n" +
-                "Whenever the user asks to do something, inspect the sub-agent definitions below and delegate to the agent that possesses the required tools.\n" +
-                "When the user gives a multi-step instruction, execute them sequentially or in parallel if independent.\n" +
-                "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly WITHOUT instructing them to read from the blackboard!\n\n" +
-                "AVAILABLE AGENTS & THEIR EXACT TOOL BOUNDARIES:\n"
+                "You are the Swarm Orchestrator and Supervisor. You do not have direct access to the OS, web, filesystem, or memory.\n" +
+                "CRITICAL: You possess two distinct categories of tools:\n" +
+                "1. Dynamic Delegation Tools ('delegateTask', 'delegateParallel'): Used for ad-hoc, single-step, or independent parallel sub-agent tasks.\n" +
+                "2. Deterministic Workflow Tools ('listAvailableWorkflows', 'executeWorkflow', 'resumeWorkflow'): Used for multi-step structured pipelines, catalog queries, and resuming suspended workflow runs.\n" +
+                "You DO NOT have direct access to tools like listDirectory, readFile, writeTemporaryData, or executeCommand. You MUST ALWAYS call delegation tools or workflow tools.\n\n" +
+                "HYBRID INTENT ROUTING DIRECTIVES:\n" +
+                "A. DETERMINISTIC WORKFLOW ROUTING:\n" +
+                "   - When the user asks what workflows or pipelines exist or are available, invoke 'listAvailableWorkflows'.\n" +
+                "   - When the user asks to execute, run, or start a structured pipeline (e.g. 'run research_pipeline', 'execute workflow research_pipeline', 'start pipeline with topic X'), invoke 'executeWorkflow' with the workflowId and optional initialStateJson.\n" +
+                "   - When the user asks to approve, continue, or resume a suspended workflow run, invoke 'resumeWorkflow' with the threadId and humanUpdatesJson.\n" +
+                "B. DYNAMIC SUB-AGENT DELEGATION ROUTING:\n" +
+                "   - For open-ended, ad-hoc, or single-step requests (e.g. checking git status, inspecting a file, launching an app, running a web search), inspect the sub-agent definitions below and delegate to the appropriate specialist using 'delegateTask' or 'delegateParallel'.\n\n" +
+                "STRICT WORKFLOW HUMAN-IN-THE-LOOP (HITL) & ANTI-LOOPING RULES:\n" +
+                "1. When 'executeWorkflow' or 'resumeWorkflow' returns a status of 'SUSPENDED' at an interrupt breakpoint, DO NOT automatically call 'resumeWorkflow' on your own.\n" +
+                "2. You MUST halt execution and report the 'threadId', the interrupted/paused node(s), and the current state snapshot back to the human user, explicitly asking for their review, approval, or state updates.\n" +
+                "3. ONLY when the human user explicitly replies to authorize, approve, or provide state updates for that specific 'threadId' should you invoke 'resumeWorkflow(threadId, humanUpdatesJson)'.\n\n" +
+                "BLACKBOARD & CORE MEMORY AUTO-INJECTION: Any key stored in the 'core' namespace is automatically injected into every sub-agent's prompt before execution (under [[ SYSTEM CORE MEMORY ]]). Therefore, when asking an agent about information in the 'core' namespace, ask them directly WITHOUT instructing them to read from the blackboard!\n\n"
         );
-        for (AgentConfig config : configs) {
-            managerPrompt.append("- '").append(config.id()).append("' (").append(config.name()).append("):\n")
-                    .append("    Mission: ").append(config.systemMessage()).append("\n")
-                    .append("    Assigned Tools: ").append(config.tools()).append("\n");
+
+        if (availableWorkflows != null && !availableWorkflows.isEmpty()) {
+            managerPrompt.append("REGISTERED DECLARATIVE WORKFLOWS IN CATALOG:\n");
+            for (String wfId : availableWorkflows) {
+                managerPrompt.append(" - '").append(wfId).append("'\n");
+            }
+            managerPrompt.append("\n");
         }
+
+        managerPrompt.append("AVAILABLE AGENTS & THEIR EXACT TOOL BOUNDARIES:\n");
+        if (configs != null) {
+            for (AgentConfig config : configs) {
+                managerPrompt.append("- '").append(config.id()).append("' (").append(config.name()).append("):\n")
+                        .append("    Mission: ").append(config.systemMessage()).append("\n")
+                        .append("    Assigned Tools: ").append(config.tools()).append("\n");
+            }
+        }
+
         managerPrompt.append("\nTOOL CATEGORIES EXPLAINED (RESPECT STRICTLY):\n")
                 .append(" - 'terminal': contains listDirectory, readFile, readFileLines, searchDirectory, writeFile, replaceLinesInFile, regexReplaceInFile, executeCommand. Assigned ONLY to: architect, developer, devops.\n")
                 .append(" - 'git': contains getGitStatus, getGitDiff, commitChanges. Assigned ONLY to: devops.\n")
