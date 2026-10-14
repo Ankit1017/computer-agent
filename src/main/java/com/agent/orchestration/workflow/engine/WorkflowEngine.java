@@ -5,6 +5,7 @@ import com.agent.factory.SubAgentFactory;
 import com.agent.orchestration.workflow.checkpoint.InMemoryCheckpointer;
 import com.agent.orchestration.workflow.checkpoint.WorkflowCheckpoint;
 import com.agent.orchestration.workflow.checkpoint.WorkflowCheckpointer;
+import com.agent.orchestration.workflow.checkpoint.WorkflowExecutionStatus;
 import com.agent.orchestration.workflow.model.WorkflowEdge;
 import com.agent.orchestration.workflow.model.WorkflowGraph;
 import com.agent.orchestration.workflow.model.WorkflowNode;
@@ -17,10 +18,12 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -32,20 +35,24 @@ import java.util.concurrent.TimeoutException;
 
 /**
  * Bulk Synchronous Parallel (BSP) execution engine for declarative workflows,
- * inspired by Pregel and LangGraph.
+ * supporting cooperative Human-in-the-Loop (HITL) interrupt breakpoints, state checkpointing,
+ * and durable resumption, inspired by Pregel and LangGraph.
  *
  * <p>Executes workflow graphs in discrete "supersteps":
  * <ul>
+ *   <li><b>Pre-Execution Interrupts (interruptBefore)</b>: Pauses cleanly before executing designated nodes,
+ *       allowing human authorization or parameter modification.</li>
  *   <li><b>Phase A: Concurrent Execution (Virtual Threads)</b>: Active nodes are dispatched
  *       concurrently onto Java 21 Virtual Threads, executing sub-agent tasks with immutable
  *       state snapshots without mutating global state.</li>
  *   <li><b>Phase B: Synchronization Barrier & State Update</b>: The engine blocks at a barrier,
  *       gathers partial updates, and atomically applies them via channel {@link com.agent.orchestration.workflow.state.Reducer}s.</li>
  *   <li><b>Phase C: Planning (Edge Evaluation)</b>: Outbound edges from executed nodes are evaluated
- *       against the newly reduced state using {@link ConditionEvaluator}, collecting active nodes for
- *       the subsequent superstep.</li>
- *   <li><b>Checkpointing</b>: Point-in-time snapshots are durably persisted after Phase C,
- *       enabling state recovery and resumption via {@link #resume(String)} without re-executing completed nodes.</li>
+ *       against the newly reduced state using {@link ConditionEvaluator}.</li>
+ *   <li><b>Post-Execution Interrupts (interruptAfter)</b>: Pauses cleanly after node completion,
+ *       allowing human inspection, approval/rejection, and state injection before downstream branching.</li>
+ *   <li><b>Checkpointing & Resumption</b>: Point-in-time snapshots are persisted via {@link WorkflowCheckpointer},
+ *       enabling state recovery via {@link #resume(String, Map)} without re-executing completed nodes.</li>
  * </ul>
  */
 public class WorkflowEngine {
@@ -191,7 +198,7 @@ public class WorkflowEngine {
 
     /**
      * Executes the workflow using the Bulk Synchronous Parallel (BSP) superstep model
-     * with checkpointing after each superstep.
+     * with checkpointing and cooperative interrupt support.
      *
      * @param threadId     unique identifier for the workflow execution run
      * @param initialState initial key-value state payload
@@ -209,17 +216,30 @@ public class WorkflowEngine {
         Set<String> startingActiveNodes = new LinkedHashSet<>();
         startingActiveNodes.add(graph.startNodeId());
 
-        return runSuperstepLoop(executionThreadId, 0, startingActiveNodes);
+        return runSuperstepLoop(executionThreadId, 0, startingActiveNodes, Collections.emptySet());
     }
 
     /**
      * Resumes workflow execution from the latest recorded checkpoint matching threadId.
-     * Rehydrates state and continues driving active nodes to __END__ without re-running prior nodes.
+     * Rehydrates state and continues driving active nodes without re-running completed nodes.
      *
      * @param threadId unique workflow run identifier to resume
      * @return final reduced WorkflowState
      */
     public WorkflowState resume(String threadId) {
+        return resume(threadId, Collections.emptyMap());
+    }
+
+    /**
+     * Resumes workflow execution from the latest recorded checkpoint matching threadId,
+     * applying human-in-the-loop state updates (e.g. approvals, edits, rejections)
+     * and clearing any pre-execution pause blocks.
+     *
+     * @param threadId          unique workflow run identifier to resume
+     * @param humanStateUpdates state modifications injected by the human operator
+     * @return final reduced WorkflowState
+     */
+    public WorkflowState resume(String threadId, Map<String, Object> humanStateUpdates) {
         if (threadId == null || threadId.isBlank()) {
             throw new IllegalArgumentException("threadId must not be null or blank to resume");
         }
@@ -229,34 +249,56 @@ public class WorkflowEngine {
                         "Cannot resume workflow. No checkpoint found for threadId: " + threadId
                 ));
 
-        log.info("[WORKFLOW] Resuming workflow '{}' for threadId '{}' from superstep {} with active nodes: {}",
-                graph.workflowId(), threadId, checkpoint.superstep(), checkpoint.activeNodes());
+        log.info("[WORKFLOW] Resuming workflow '{}' for threadId '{}' from superstep {} (status={}) with active nodes: {}",
+                graph.workflowId(), threadId, checkpoint.superstep(), checkpoint.status(), checkpoint.activeNodes());
 
+        // 1. Rehydrate state from checkpoint snapshot
         state.restoreState(checkpoint.stateData());
 
-        Set<String> resumeActiveNodes = new LinkedHashSet<>(checkpoint.activeNodes());
-        return runSuperstepLoop(threadId.trim(), checkpoint.superstep(), resumeActiveNodes);
+        // 2. Atomically merge human operator state updates via channel reducers
+        if (humanStateUpdates != null && !humanStateUpdates.isEmpty()) {
+            log.info("[WORKFLOW] Applying human state updates to thread '{}': {}", threadId, humanStateUpdates.keySet());
+            state.applyUpdate(humanStateUpdates);
+        }
+
+        // 3. Determine starting active nodes and interrupt bypasses
+        Set<String> startingActiveNodes = new LinkedHashSet<>(checkpoint.activeNodes());
+        Set<String> bypassedInterruptBeforeNodes = new HashSet<>();
+        int resumeSuperstepCount = checkpoint.superstep();
+
+        if ("BEFORE".equalsIgnoreCase(checkpoint.interruptType())) {
+            // Human authorized the node(s) that paused before execution; bypass interruptBefore on them for this step
+            bypassedInterruptBeforeNodes.addAll(checkpoint.interruptedNodes());
+            // Since this step was paused before execution, its superstep counter was recorded as pending (checkpoint.superstep()),
+            // so we set the initial count to checkpoint.superstep() - 1 so ++superstepCount increments to the step properly
+            resumeSuperstepCount = Math.max(0, checkpoint.superstep() - 1);
+        } else if ("AFTER".equalsIgnoreCase(checkpoint.interruptType())) {
+            // If paused AFTER execution and human modified state, re-evaluate outgoing edges against the updated state
+            if (humanStateUpdates != null && !humanStateUpdates.isEmpty() && !checkpoint.interruptedNodes().isEmpty()) {
+                List<String> finishedNodes = new ArrayList<>(checkpoint.interruptedNodes());
+                startingActiveNodes = evaluateNextActiveNodes(finishedNodes);
+                log.info("[WORKFLOW] Re-evaluated outgoing edges after human state injection. New active nodes: {}",
+                        startingActiveNodes);
+            }
+        }
+
+        return runSuperstepLoop(threadId.trim(), resumeSuperstepCount, startingActiveNodes, bypassedInterruptBeforeNodes);
     }
 
     private WorkflowState runSuperstepLoop(
             String threadId,
             int initialSuperstepCount,
-            Set<String> initialActiveNodes
+            Set<String> initialActiveNodes,
+            Set<String> initialBypassedInterruptBeforeNodes
     ) {
         Set<String> activeNodes = new LinkedHashSet<>(initialActiveNodes);
+        Set<String> bypassedInterruptBeforeNodes = new HashSet<>(initialBypassedInterruptBeforeNodes);
         int superstepCount = initialSuperstepCount;
 
         log.info("[WORKFLOW] Commencing BSP workflow '{}' (threadId='{}') at superstep {} with active nodes: {}",
                 graph.workflowId(), threadId, superstepCount, activeNodes);
 
         while (!activeNodes.isEmpty() && !isTerminated(activeNodes)) {
-            if (++superstepCount > MAX_STEP_LIMIT) {
-                throw new IllegalStateException(
-                        "Workflow '" + graph.workflowId() + "' exceeded maximum step limit ("
-                                + MAX_STEP_LIMIT + "). Possible infinite loop or invalid cycle detected."
-                );
-            }
-
             // Exclude terminal __END__ node markers from active dispatch
             List<String> executableNodeIds = activeNodes.stream()
                     .filter(id -> !WorkflowGraph.END_NODE.equalsIgnoreCase(id))
@@ -265,6 +307,50 @@ public class WorkflowEngine {
             if (executableNodeIds.isEmpty()) {
                 log.info("[WORKFLOW] No executable nodes remaining in superstep {}. Terminating.", superstepCount);
                 break;
+            }
+
+            // =================================================================
+            // Pre-Execution Check: interruptBefore Breakpoints
+            // =================================================================
+            Set<String> interruptBeforeTriggers = new LinkedHashSet<>();
+            for (String nodeId : executableNodeIds) {
+                if (bypassedInterruptBeforeNodes.contains(nodeId)) {
+                    continue;
+                }
+                WorkflowNode node = graph.findNode(nodeId).orElse(null);
+                if (node != null && node.interruptBefore()) {
+                    interruptBeforeTriggers.add(nodeId);
+                }
+            }
+
+            if (!interruptBeforeTriggers.isEmpty()) {
+                int suspendedStep = superstepCount + 1;
+                log.info("[WORKFLOW] Pre-execution interrupt triggered for node(s): {} at superstep {} in thread '{}'. Suspending.",
+                        interruptBeforeTriggers, suspendedStep, threadId);
+
+                WorkflowCheckpoint suspendedCheckpoint = new WorkflowCheckpoint(
+                        threadId,
+                        graph.workflowId(),
+                        suspendedStep,
+                        activeNodes,
+                        state.getData(),
+                        System.currentTimeMillis(),
+                        WorkflowExecutionStatus.SUSPENDED,
+                        interruptBeforeTriggers,
+                        "BEFORE"
+                );
+                checkpointer.save(suspendedCheckpoint);
+                return state;
+            }
+
+            // Clear single-step bypasses once past pre-execution checks
+            bypassedInterruptBeforeNodes.clear();
+
+            if (++superstepCount > MAX_STEP_LIMIT) {
+                throw new IllegalStateException(
+                        "Workflow '" + graph.workflowId() + "' exceeded maximum step limit ("
+                                + MAX_STEP_LIMIT + "). Possible infinite loop or invalid cycle detected."
+                );
             }
 
             log.info("[WORKFLOW] Superstep {}: Concurrently executing {} node(s): {}",
@@ -341,81 +427,113 @@ public class WorkflowEngine {
             // =================================================================
             // Phase C: Planning (Edge Evaluation)
             // =================================================================
-            Set<String> nextActiveNodes = new LinkedHashSet<>();
-
-            for (String nodeId : executableNodeIds) {
-                List<WorkflowEdge> outboundEdges = graph.getOutboundEdges(nodeId);
-                if (outboundEdges.isEmpty()) {
-                    throw new WorkflowRoutingException(
-                            "Node '" + nodeId + "' has no outbound edges and did not transition to '"
-                                    + WorkflowGraph.END_NODE + "'"
-                    );
-                }
-
-                boolean hasConditions = outboundEdges.stream()
-                        .anyMatch(e -> e.condition() != null && !e.condition().isBlank());
-
-                List<WorkflowEdge> matchedEdges = new ArrayList<>();
-                List<WorkflowEdge> defaultEdges = new ArrayList<>();
-
-                for (WorkflowEdge edge : outboundEdges) {
-                    if (edge.isDefault()) {
-                        defaultEdges.add(edge);
-                    } else if (edge.condition() != null && !edge.condition().isBlank()) {
-                        if (conditionEvaluator.evaluate(edge.condition(), state)) {
-                            matchedEdges.add(edge);
-                            log.info("[WORKFLOW] Condition '{}' met for node '{}'. Routing to '{}'",
-                                    edge.condition(), nodeId, edge.targetNode());
-                        }
-                    } else {
-                        // Unconditional edge
-                        if (!hasConditions) {
-                            matchedEdges.add(edge);
-                        } else {
-                            // Acts as fallback candidate when conditional edges exist on this node
-                            defaultEdges.add(edge);
-                        }
-                    }
-                }
-
-                if (matchedEdges.isEmpty()) {
-                    if (!defaultEdges.isEmpty()) {
-                        matchedEdges.addAll(defaultEdges);
-                        log.info("[WORKFLOW] No condition satisfied for node '{}'. Routing to {} default edge(s)",
-                                nodeId, defaultEdges.size());
-                    } else {
-                        throw new WorkflowRoutingException(
-                                "No condition satisfied for node '" + nodeId + "' and no default edge was configured."
-                        );
-                    }
-                }
-
-                for (WorkflowEdge edge : matchedEdges) {
-                    nextActiveNodes.add(edge.targetNode());
-                }
-            }
-
+            Set<String> nextActiveNodes = evaluateNextActiveNodes(executableNodeIds);
             activeNodes = nextActiveNodes;
 
             // =================================================================
-            // Checkpointing: Persist state & next active nodes for durable recovery
+            // Post-Execution Check: interruptAfter Breakpoints
             // =================================================================
+            Set<String> interruptAfterTriggers = new LinkedHashSet<>();
+            for (String nodeId : executableNodeIds) {
+                WorkflowNode node = graph.findNode(nodeId).orElse(null);
+                if (node != null && node.interruptAfter()) {
+                    interruptAfterTriggers.add(nodeId);
+                }
+            }
+
+            boolean isFinal = isTerminated(activeNodes);
+            WorkflowExecutionStatus stepStatus = !interruptAfterTriggers.isEmpty()
+                    ? WorkflowExecutionStatus.SUSPENDED
+                    : (isFinal ? WorkflowExecutionStatus.COMPLETED : WorkflowExecutionStatus.RUNNING);
+
+            String interruptType = !interruptAfterTriggers.isEmpty() ? "AFTER" : null;
+
+            // Checkpoint: Persist state & next active nodes
             WorkflowCheckpoint checkpoint = new WorkflowCheckpoint(
                     threadId,
                     graph.workflowId(),
                     superstepCount,
                     activeNodes,
-                    state.getData()
+                    state.getData(),
+                    System.currentTimeMillis(),
+                    stepStatus,
+                    interruptAfterTriggers,
+                    interruptType
             );
             checkpointer.save(checkpoint);
-            log.info("[WORKFLOW] Checkpoint saved for thread '{}' superstep {}. Next active nodes: {}",
-                    threadId, superstepCount, activeNodes);
+            log.info("[WORKFLOW] Checkpoint saved for thread '{}' superstep {} (status={}). Next active nodes: {}",
+                    threadId, superstepCount, stepStatus, activeNodes);
+
+            if (!interruptAfterTriggers.isEmpty()) {
+                log.info("[WORKFLOW] Post-execution interrupt triggered for node(s): {} in thread '{}'. Suspending.",
+                        interruptAfterTriggers, threadId);
+                return state;
+            }
         }
 
         log.info("[WORKFLOW] Workflow '{}' (threadId='{}') terminated successfully in {} superstep(s).",
                 graph.workflowId(), threadId, superstepCount);
 
         return state;
+    }
+
+    private Set<String> evaluateNextActiveNodes(List<String> nodeIds) {
+        Set<String> nextNodes = new LinkedHashSet<>();
+        for (String nodeId : nodeIds) {
+            List<WorkflowEdge> outboundEdges = graph.getOutboundEdges(nodeId);
+            if (outboundEdges.isEmpty()) {
+                throw new WorkflowRoutingException(
+                        "Node '" + nodeId + "' has no outbound edges and did not transition to '"
+                                + WorkflowGraph.END_NODE + "'"
+                );
+            }
+
+            boolean hasConditions = outboundEdges.stream()
+                    .anyMatch(e -> e.condition() != null && !e.condition().isBlank());
+
+            List<WorkflowEdge> matchedEdges = new ArrayList<>();
+            List<WorkflowEdge> defaultEdges = new ArrayList<>();
+
+            for (WorkflowEdge edge : outboundEdges) {
+                if (edge.isDefault()) {
+                    defaultEdges.add(edge);
+                } else if (edge.condition() != null && !edge.condition().isBlank()) {
+                    if (conditionEvaluator.evaluate(edge.condition(), state)) {
+                        matchedEdges.add(edge);
+                        log.info("[WORKFLOW] Condition '{}' met for node '{}'. Routing to '{}'",
+                                edge.condition(), nodeId, edge.targetNode());
+                    }
+                } else {
+                    if (!hasConditions) {
+                        matchedEdges.add(edge);
+                    } else {
+                        defaultEdges.add(edge);
+                    }
+                }
+            }
+
+            if (matchedEdges.isEmpty()) {
+                if (!defaultEdges.isEmpty()) {
+                    matchedEdges.addAll(defaultEdges);
+                    log.info("[WORKFLOW] No condition satisfied for node '{}'. Routing to {} default edge(s)",
+                            nodeId, defaultEdges.size());
+                } else {
+                    WorkflowNode node = graph.findNode(nodeId).orElse(null);
+                    if (node != null && node.interruptAfter()) {
+                        log.info("[WORKFLOW] Node '{}' has interruptAfter=true; deferring edge routing to human resumption", nodeId);
+                    } else {
+                        throw new WorkflowRoutingException(
+                                "No condition satisfied for node '" + nodeId + "' and no default edge was configured."
+                        );
+                    }
+                }
+            }
+
+            for (WorkflowEdge edge : matchedEdges) {
+                nextNodes.add(edge.targetNode());
+            }
+        }
+        return nextNodes;
     }
 
     private boolean isTerminated(Set<String> nodes) {
@@ -491,5 +609,29 @@ public class WorkflowEngine {
 
     public WorkflowCheckpointer getCheckpointer() {
         return checkpointer;
+    }
+
+    public WorkflowExecutionStatus getStatus(String threadId) {
+        if (threadId == null || threadId.isBlank()) {
+            return WorkflowExecutionStatus.FAILED;
+        }
+        return checkpointer.loadLatest(threadId.trim())
+                .map(WorkflowCheckpoint::status)
+                .orElse(WorkflowExecutionStatus.FAILED);
+    }
+
+    public boolean isSuspended(String threadId) {
+        return getStatus(threadId) == WorkflowExecutionStatus.SUSPENDED;
+    }
+
+    public boolean isCompleted(String threadId) {
+        return getStatus(threadId) == WorkflowExecutionStatus.COMPLETED;
+    }
+
+    public Optional<WorkflowCheckpoint> getLatestCheckpoint(String threadId) {
+        if (threadId == null || threadId.isBlank()) {
+            return Optional.empty();
+        }
+        return checkpointer.loadLatest(threadId.trim());
     }
 }

@@ -34,9 +34,7 @@ public class InMemoryCheckpointer implements WorkflowCheckpointer {
         if (history == null || history.isEmpty()) {
             return Optional.empty();
         }
-        return history.stream()
-                .max(Comparator.comparingInt(WorkflowCheckpoint::superstep)
-                        .thenComparingLong(WorkflowCheckpoint::timestamp));
+        return Optional.of(history.get(history.size() - 1));
     }
 
     @Override
