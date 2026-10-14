@@ -1,0 +1,35 @@
+{
+  "workflowId": "research_pipeline",
+  "startNodeId": "node_1",
+  "nodes": [
+    {
+      "nodeId": "node_1",
+      "agentId": "researcher",
+      "taskInstruction": "Research Java 21 features."
+    },
+    {
+      "nodeId": "node_2",
+      "agentId": "architect",
+      "taskInstruction": "Summarize the research into an architecture doc."
+    },
+    {
+      "nodeId": "node_3",
+      "agentId": "developer",
+      "taskInstruction": "Write the final document to disk."
+    }
+  ],
+  "edges": [
+    {
+      "sourceNode": "node_1",
+      "targetNode": "node_2"
+    },
+    {
+      "sourceNode": "node_2",
+      "targetNode": "node_3"
+    },
+    {
+      "sourceNode": "node_3",
+      "targetNode": "__END__"
+    }
+  ]
+}
