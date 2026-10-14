@@ -11,7 +11,9 @@ import com.agent.orchestration.workflow.state.WorkflowState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -290,5 +292,182 @@ class WorkflowEngineTest {
         assertThatThrownBy(engine::execute)
                 .isInstanceOf(WorkflowRoutingException.class)
                 .hasMessageContaining("has no outbound edges");
+    }
+
+    @Test
+    @DisplayName("Should execute parallel fan-out nodes concurrently via Virtual Threads and merge state via AppendListReducer")
+    void shouldExecuteParallelFanOutNodesConcurrentlyAndMergeState() {
+        // Define fan-out graph:
+        // node_1 -> node_2a
+        // node_1 -> node_2b
+        // node_2a -> __END__
+        // node_2b -> __END__
+        WorkflowGraph fanOutGraph = new WorkflowGraph(
+                "fan_out_pipeline",
+                "node_1",
+                List.of(
+                        new WorkflowNode("node_1", "starter", "Initialize pipeline"),
+                        new WorkflowNode("node_2a", "worker_a", "Extract Fact A"),
+                        new WorkflowNode("node_2b", "worker_b", "Extract Fact B")
+                ),
+                List.of(
+                        new WorkflowEdge("node_1", "node_2a"),
+                        new WorkflowEdge("node_1", "node_2b"),
+                        new WorkflowEdge("node_2a", WorkflowGraph.END_NODE),
+                        new WorkflowEdge("node_2b", WorkflowGraph.END_NODE)
+                )
+        );
+
+        WorkflowState state = new WorkflowState();
+        state.registerReducer("notes", new AppendListReducer<String>());
+
+        List<String> executedThreads = Collections.synchronizedList(new ArrayList<>());
+
+        WorkflowAgentInvoker invoker = (agentId, prompt) -> {
+            executedThreads.add(Thread.currentThread().toString());
+            return switch (agentId) {
+                case "starter" -> """
+                        { "status": "PIPELINE_INITIALIZED" }
+                        """;
+                case "worker_a" -> """
+                        ```json
+                        { "notes": "Fact A" }
+                        ```
+                        """;
+                case "worker_b" -> """
+                        ```json
+                        { "notes": "Fact B" }
+                        ```
+                        """;
+                default -> "{}";
+            };
+        };
+
+        WorkflowEngine engine = new WorkflowEngine(fanOutGraph, invoker, state);
+        WorkflowState finalState = engine.execute();
+
+        // Verify status from node_1 was preserved
+        assertThat(finalState.get("status")).isEqualTo("PIPELINE_INITIALIZED");
+
+        // Verify thread-safe reduction: both Fact A and Fact B must be present without data loss
+        @SuppressWarnings("unchecked")
+        List<String> notes = finalState.get("notes", List.class);
+        assertThat(notes).containsExactlyInAnyOrder("Fact A", "Fact B");
+
+        // Verify 3 agent invocations occurred
+        assertThat(executedThreads).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("Should handle hanging virtual thread safely at synchronization barrier on timeout")
+    void shouldHandleHangingVirtualThreadGracefullyOnTimeout() {
+        WorkflowGraph hangGraph = new WorkflowGraph(
+                "hang_pipeline",
+                "hang_node",
+                List.of(new WorkflowNode("hang_node", "slow_worker", "Simulate hang")),
+                List.of(new WorkflowEdge("hang_node", WorkflowGraph.END_NODE))
+        );
+
+        WorkflowAgentInvoker hangingInvoker = (agentId, prompt) -> {
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return "{ \"status\": \"never_reached\" }";
+        };
+
+        // Set barrier timeout to 250 milliseconds
+        WorkflowEngine engine = new WorkflowEngine(hangGraph, hangingInvoker, Duration.ofMillis(250));
+
+        assertThatThrownBy(engine::execute)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("timed out");
+    }
+
+    @Test
+    @DisplayName("Should safely propagate worker agent failure occurring inside virtual thread task")
+    void shouldSafelyPropagateWorkerAgentFailure() {
+        WorkflowGraph failGraph = new WorkflowGraph(
+                "fail_pipeline",
+                "fail_node",
+                List.of(new WorkflowNode("fail_node", "broken_worker", "Throw error")),
+                List.of(new WorkflowEdge("fail_node", WorkflowGraph.END_NODE))
+        );
+
+        WorkflowAgentInvoker failingInvoker = (agentId, prompt) -> {
+            throw new RuntimeException("Simulated worker agent failure");
+        };
+
+        WorkflowEngine engine = new WorkflowEngine(failGraph, failingInvoker);
+
+        assertThatThrownBy(engine::execute)
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Simulated worker agent failure");
+    }
+
+    @Test
+    @DisplayName("Should support diamond graph with parallel fan-out and downstream fan-in barrier aggregation")
+    void shouldSupportDiamondFanOutAndFanInJoin() {
+        // Diamond DAG:
+        // start_node -> [branch_a, branch_b] -> join_node -> __END__
+        WorkflowGraph diamondGraph = new WorkflowGraph(
+                "diamond_pipeline",
+                "start_node",
+                List.of(
+                        new WorkflowNode("start_node", "coordinator", "Start"),
+                        new WorkflowNode("branch_a", "worker_a", "Process branch A"),
+                        new WorkflowNode("branch_b", "worker_b", "Process branch B"),
+                        new WorkflowNode("join_node", "aggregator", "Aggregate branches")
+                ),
+                List.of(
+                        new WorkflowEdge("start_node", "branch_a"),
+                        new WorkflowEdge("start_node", "branch_b"),
+                        new WorkflowEdge("branch_a", "join_node"),
+                        new WorkflowEdge("branch_b", "join_node"),
+                        new WorkflowEdge("join_node", WorkflowGraph.END_NODE)
+                )
+        );
+
+        WorkflowState state = new WorkflowState();
+        state.registerReducer("metrics", new AppendListReducer<String>());
+
+        List<String> promptReceivedByAggregator = new ArrayList<>();
+
+        WorkflowAgentInvoker invoker = (agentId, prompt) -> switch (agentId) {
+            case "coordinator" -> """
+                    { "phase": "FAN_OUT" }
+                    """;
+            case "worker_a" -> """
+                    { "metrics": "Metric_Alpha" }
+                    """;
+            case "worker_b" -> """
+                    { "metrics": "Metric_Beta" }
+                    """;
+            case "aggregator" -> {
+                promptReceivedByAggregator.add(prompt);
+                yield """
+                        { "aggregated": true, "phase": "COMPLETE" }
+                        """;
+            }
+            default -> "{}";
+        };
+
+        WorkflowEngine engine = new WorkflowEngine(diamondGraph, invoker, state);
+        WorkflowState finalState = engine.execute();
+
+        // Verify parallel reduction in diamond branches
+        @SuppressWarnings("unchecked")
+        List<String> metrics = finalState.get("metrics", List.class);
+        assertThat(metrics).containsExactlyInAnyOrder("Metric_Alpha", "Metric_Beta");
+
+        // Verify aggregator was executed once and received both parallel metrics in its prompt snapshot
+        assertThat(promptReceivedByAggregator).hasSize(1);
+        assertThat(promptReceivedByAggregator.get(0))
+                .contains("Metric_Alpha")
+                .contains("Metric_Beta");
+
+        assertThat(finalState.get("aggregated")).isEqualTo(true);
+        assertThat(finalState.get("phase")).isEqualTo("COMPLETE");
     }
 }
