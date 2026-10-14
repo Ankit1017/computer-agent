@@ -38,6 +38,22 @@ public class TerminalToolsFacade {
         return commandService.execute(command);
     }
 
+    @Tool("Execute a raw terminal command on the host OS within a specific working directory. Returns standard output or error.")
+    public String executeCommand(
+            @P("command to execute") String command,
+            @P("working directory path") String workingDirectory) {
+        if (command == null || command.isBlank()) {
+            return "Error: Command cannot be empty.";
+        }
+        String target = (workingDirectory != null && !workingDirectory.isBlank())
+                ? command + " (in " + workingDirectory + ")"
+                : command;
+        if (!security.requestPermission("execute command", target)) {
+            return "User denied command execution.";
+        }
+        return commandService.execute(command, workingDirectory);
+    }
+
     // --- LIST DIRECTORY OVERLOADS ---
     @Tool("Recursively list directory contents as a tree using default settings.")
     public String listDirectory(@P("The path to the directory") String directoryPath) {
