@@ -5,6 +5,7 @@ import com.agent.factory.SubAgentFactory;
 import com.agent.orchestration.workflow.model.WorkflowEdge;
 import com.agent.orchestration.workflow.model.WorkflowGraph;
 import com.agent.orchestration.workflow.model.WorkflowNode;
+import com.agent.orchestration.workflow.model.WorkflowRoutingException;
 import com.agent.orchestration.workflow.state.WorkflowState;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -16,13 +17,13 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Deterministic sequential execution engine for declarative workflows,
- * inspired by LangGraph and Pregel.
+ * Deterministic execution engine for declarative workflows supporting both sequential
+ * pipelines and dynamic state-driven conditional branching, inspired by LangGraph and Pregel.
  *
  * <p>Traverses nodes in a {@link WorkflowGraph}, dispatches tasks to specialized sub-agents
  * while injecting active state context, parses partial updates, applies them through
- * configured channel reducers in {@link WorkflowState}, and traverses static transitions
- * until the terminal marker {@code __END__} is reached.
+ * configured channel reducers in {@link WorkflowState}, and evaluates conditional edges
+ * to select dynamic transitions until {@code __END__} is reached.
  */
 public class WorkflowEngine {
 
@@ -33,22 +34,23 @@ public class WorkflowEngine {
     private final WorkflowState state;
     private final WorkflowAgentInvoker agentInvoker;
     private final StateUpdateParser outputParser;
+    private final ConditionEvaluator conditionEvaluator;
     private final ObjectMapper objectMapper;
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker) {
-        this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser());
+        this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator());
     }
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker, WorkflowState state) {
-        this(graph, agentInvoker, state, new StateUpdateParser());
+        this(graph, agentInvoker, state, new StateUpdateParser(), new ConditionEvaluator());
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory) {
-        this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser());
+        this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator());
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowState state) {
-        this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser());
+        this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator());
     }
 
     public WorkflowEngine(
@@ -57,10 +59,21 @@ public class WorkflowEngine {
             WorkflowState state,
             StateUpdateParser outputParser
     ) {
+        this(graph, agentInvoker, state, outputParser, new ConditionEvaluator());
+    }
+
+    public WorkflowEngine(
+            WorkflowGraph graph,
+            WorkflowAgentInvoker agentInvoker,
+            WorkflowState state,
+            StateUpdateParser outputParser,
+            ConditionEvaluator conditionEvaluator
+    ) {
         this.graph = Objects.requireNonNull(graph, "graph must not be null");
         this.agentInvoker = Objects.requireNonNull(agentInvoker, "agentInvoker must not be null");
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.outputParser = Objects.requireNonNull(outputParser, "outputParser must not be null");
+        this.conditionEvaluator = Objects.requireNonNull(conditionEvaluator, "conditionEvaluator must not be null");
         this.objectMapper = new ObjectMapper();
     }
 
@@ -74,7 +87,8 @@ public class WorkflowEngine {
     }
 
     /**
-     * Executes the workflow sequentially from startNodeId to __END__.
+     * Executes the workflow from startNodeId to __END__, dynamically selecting
+     * edge transitions based on state conditions and default fallbacks.
      *
      * @param initialState initial key-value state payload
      * @return final reduced WorkflowState
@@ -117,19 +131,52 @@ public class WorkflowEngine {
             // 4. Apply partial update to WorkflowState via channel reducers
             state.applyUpdate(partialUpdate);
 
-            // 5. Look up the outgoing edge for the current node
+            // 5. Look up outgoing edges for the current node
             List<WorkflowEdge> outboundEdges = graph.getOutboundEdges(node.nodeId());
             if (outboundEdges.isEmpty()) {
-                throw new IllegalStateException(
+                throw new WorkflowRoutingException(
                         "Node '" + node.nodeId() + "' has no outbound edges and did not transition to '"
                                 + WorkflowGraph.END_NODE + "'"
                 );
             }
 
-            // In sequential execution, traverse the single outbound transition
-            WorkflowEdge nextEdge = outboundEdges.get(0);
-            currentNodeId = nextEdge.targetNode();
+            // 6. Dynamic condition-driven routing
+            WorkflowEdge selectedEdge = null;
+            WorkflowEdge defaultEdge = null;
 
+            for (WorkflowEdge edge : outboundEdges) {
+                if (edge.isDefault()) {
+                    if (defaultEdge == null) {
+                        defaultEdge = edge;
+                    }
+                } else if (edge.condition() == null || edge.condition().isBlank()) {
+                    // Unconditional edge acts as default fallback if no condition matches
+                    if (defaultEdge == null) {
+                        defaultEdge = edge;
+                    }
+                }
+
+                if (edge.condition() != null && !edge.condition().isBlank()) {
+                    if (conditionEvaluator.evaluate(edge.condition(), state)) {
+                        selectedEdge = edge;
+                        log.info("[WORKFLOW] Condition '{}' met. Routing to '{}'", edge.condition(), edge.targetNode());
+                        break;
+                    }
+                }
+            }
+
+            if (selectedEdge == null) {
+                if (defaultEdge != null) {
+                    selectedEdge = defaultEdge;
+                    log.info("[WORKFLOW] No condition satisfied. Routing to default edge target '{}'", defaultEdge.targetNode());
+                } else {
+                    throw new WorkflowRoutingException(
+                            "No condition satisfied for node '" + node.nodeId() + "' and no default edge was configured."
+                    );
+                }
+            }
+
+            currentNodeId = selectedEdge.targetNode();
             log.info("[WORKFLOW] Step {} completed. Transitioning to '{}'", stepCount, currentNodeId);
         }
 
@@ -181,5 +228,9 @@ public class WorkflowEngine {
 
     public WorkflowState getState() {
         return state;
+    }
+
+    public ConditionEvaluator getConditionEvaluator() {
+        return conditionEvaluator;
     }
 }

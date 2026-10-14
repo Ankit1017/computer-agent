@@ -3,6 +3,7 @@ package com.agent.orchestration.workflow.engine;
 import com.agent.orchestration.workflow.model.WorkflowEdge;
 import com.agent.orchestration.workflow.model.WorkflowGraph;
 import com.agent.orchestration.workflow.model.WorkflowNode;
+import com.agent.orchestration.workflow.model.WorkflowRoutingException;
 import com.agent.orchestration.workflow.services.WorkflowParserService;
 import com.agent.orchestration.workflow.state.AppendListReducer;
 import com.agent.orchestration.workflow.state.OverwriteReducer;
@@ -86,16 +87,145 @@ class WorkflowEngineTest {
 
         // 6. Assert state injection into downstream agent prompts
         assertThat(receivedPrompts).hasSize(3);
-        // Step 1: researcher receives initial state
         assertThat(receivedPrompts.get(0)).contains("Operation Phoenix");
-        // Step 2: architect receives researcher's findings
         assertThat(receivedPrompts.get(1))
                 .contains("Operation Phoenix")
                 .contains("Java 21 introduces Virtual Threads and Record Patterns.");
-        // Step 3: developer receives both researcher and architect findings
         assertThat(receivedPrompts.get(2))
                 .contains("Enterprise Java 21 Architecture Document")
                 .contains("Designed clean 3-tier reactive pipeline architecture.");
+    }
+
+    @Test
+    @DisplayName("Should dynamically branch to remediation node on error and to __END__ on success")
+    void shouldDynamicallyBranchBasedOnEvaluatedCondition() {
+        // Build branching graph:
+        // eval_node -> [condition: status == 'error'] -> remediation_node -> __END__
+        // eval_node -> [condition: status == 'success'] -> __END__
+        WorkflowGraph branchingGraph = new WorkflowGraph(
+                "branching_pipeline",
+                "eval_node",
+                List.of(
+                        new WorkflowNode("eval_node", "architect", "Evaluate health"),
+                        new WorkflowNode("remediation_node", "developer", "Apply fix")
+                ),
+                List.of(
+                        new WorkflowEdge("eval_node", "remediation_node", "status == 'error'"),
+                        new WorkflowEdge("eval_node", WorkflowGraph.END_NODE, "status == 'success'"),
+                        new WorkflowEdge("remediation_node", WorkflowGraph.END_NODE)
+                )
+        );
+
+        // Case A: Agent returns status = "error" -> routes to remediation_node
+        List<String> executedNodesErrorCase = new ArrayList<>();
+        WorkflowAgentInvoker errorInvoker = (agentId, prompt) -> {
+            executedNodesErrorCase.add(agentId);
+            if ("architect".equals(agentId)) {
+                return """
+                        ```json
+                        { "status": "error", "error_code": "RESOURCE_EXHAUSTED" }
+                        ```
+                        """;
+            } else {
+                return """
+                        ```json
+                        { "remediation": "Memory cache flushed", "status": "remediated" }
+                        ```
+                        """;
+            }
+        };
+
+        WorkflowEngine engineError = new WorkflowEngine(branchingGraph, errorInvoker);
+        WorkflowState stateError = engineError.execute();
+
+        assertThat(executedNodesErrorCase).containsExactly("architect", "developer");
+        assertThat(stateError.get("error_code")).isEqualTo("RESOURCE_EXHAUSTED");
+        assertThat(stateError.get("remediation")).isEqualTo("Memory cache flushed");
+
+        // Case B: Agent returns status = "success" -> routes directly to __END__
+        List<String> executedNodesSuccessCase = new ArrayList<>();
+        WorkflowAgentInvoker successInvoker = (agentId, prompt) -> {
+            executedNodesSuccessCase.add(agentId);
+            return """
+                    { "status": "success", "metrics": "All checks nominal" }
+                    """;
+        };
+
+        WorkflowEngine engineSuccess = new WorkflowEngine(branchingGraph, successInvoker);
+        WorkflowState stateSuccess = engineSuccess.execute();
+
+        assertThat(executedNodesSuccessCase).containsExactly("architect");
+        assertThat(stateSuccess.get("metrics")).isEqualTo("All checks nominal");
+        assertThat(stateSuccess.containsKey("remediation")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Should correctly take default edge when all conditional edges evaluate to false")
+    void shouldTakeDefaultEdgeWhenAllConditionsAreFalse() {
+        WorkflowGraph fallbackGraph = new WorkflowGraph(
+                "fallback_pipeline",
+                "check_node",
+                List.of(
+                        new WorkflowNode("check_node", "architect", "Verify"),
+                        new WorkflowNode("special_node", "developer", "Special Handling"),
+                        new WorkflowNode("fallback_node", "devops", "Default Fallback")
+                ),
+                List.of(
+                        new WorkflowEdge("check_node", "special_node", "status == 'SPECIAL'"),
+                        new WorkflowEdge("check_node", "fallback_node", null, true), // Default edge
+                        new WorkflowEdge("special_node", WorkflowGraph.END_NODE),
+                        new WorkflowEdge("fallback_node", WorkflowGraph.END_NODE)
+                )
+        );
+
+        List<String> executedAgents = new ArrayList<>();
+        WorkflowAgentInvoker invoker = (agentId, prompt) -> {
+            executedAgents.add(agentId);
+            if ("architect".equals(agentId)) {
+                return """
+                        { "status": "NORMAL_UNMATCHED" }
+                        """;
+            }
+            return """
+                    { "handled_by": "fallback" }
+                    """;
+        };
+
+        WorkflowEngine engine = new WorkflowEngine(fallbackGraph, invoker);
+        WorkflowState finalState = engine.execute();
+
+        assertThat(executedAgents).containsExactly("architect", "devops");
+        assertThat(finalState.get("handled_by")).isEqualTo("fallback");
+    }
+
+    @Test
+    @DisplayName("Should throw WorkflowRoutingException when no condition evaluates to true and no default edge exists")
+    void shouldThrowWorkflowRoutingExceptionWhenNoConditionMatchesAndNoDefault() {
+        WorkflowGraph unresolvableGraph = new WorkflowGraph(
+                "unresolvable_pipeline",
+                "gate_node",
+                List.of(
+                        new WorkflowNode("gate_node", "architect", "Check"),
+                        new WorkflowNode("target_a", "developer", "A"),
+                        new WorkflowNode("target_b", "devops", "B")
+                ),
+                List.of(
+                        new WorkflowEdge("gate_node", "target_a", "code == 100"),
+                        new WorkflowEdge("gate_node", "target_b", "code == 200"),
+                        new WorkflowEdge("target_a", WorkflowGraph.END_NODE),
+                        new WorkflowEdge("target_b", WorkflowGraph.END_NODE)
+                )
+        );
+
+        WorkflowAgentInvoker invoker = (agentId, prompt) -> """
+                { "code": 999 }
+                """;
+
+        WorkflowEngine engine = new WorkflowEngine(unresolvableGraph, invoker);
+
+        assertThatThrownBy(engine::execute)
+                .isInstanceOf(WorkflowRoutingException.class)
+                .hasMessageContaining("No condition satisfied for node 'gate_node'");
     }
 
     @Test
@@ -144,7 +274,7 @@ class WorkflowEngineTest {
     }
 
     @Test
-    @DisplayName("Should throw IllegalStateException when intermediate node has no outbound edges")
+    @DisplayName("Should throw WorkflowRoutingException when intermediate node has no outbound edges")
     void shouldThrowWhenNodeHasNoOutboundEdges() {
         WorkflowGraph brokenGraph = new WorkflowGraph(
                 "broken_pipeline",
@@ -158,7 +288,7 @@ class WorkflowEngineTest {
         WorkflowEngine engine = new WorkflowEngine(brokenGraph, stubInvoker);
 
         assertThatThrownBy(engine::execute)
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(WorkflowRoutingException.class)
                 .hasMessageContaining("has no outbound edges");
     }
 }

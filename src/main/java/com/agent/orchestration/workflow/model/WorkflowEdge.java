@@ -6,31 +6,42 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Represents a directed transition from a source node to a target node in a workflow graph.
- * Supports an optional condition expression for future conditional branching.
+ * Supports conditional branching expressions and fallback default edge designations.
  *
  * @param sourceNode the originating node identifier
  * @param targetNode the destination node identifier (or special terminal node "__END__")
- * @param condition  optional condition expression evaluated for branching (nullable)
+ * @param condition  optional condition expression evaluated for dynamic routing (nullable)
+ * @param isDefault  whether this edge acts as the default fallback when no conditions are met
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record WorkflowEdge(
         @JsonProperty("sourceNode") String sourceNode,
         @JsonProperty("targetNode") String targetNode,
-        @JsonProperty("condition") String condition
+        @JsonProperty("condition") String condition,
+        @JsonProperty("isDefault") boolean isDefault
 ) {
 
+    public WorkflowEdge {
+        sourceNode = sourceNode != null ? sourceNode.trim() : null;
+        targetNode = targetNode != null ? targetNode.trim() : null;
+        condition = condition != null && !condition.isBlank() ? condition.trim() : null;
+    }
+
     @JsonCreator
-    public WorkflowEdge(
+    public static WorkflowEdge fromJson(
             @JsonProperty("sourceNode") String sourceNode,
             @JsonProperty("targetNode") String targetNode,
-            @JsonProperty("condition") String condition
+            @JsonProperty("condition") String condition,
+            @JsonProperty("isDefault") Boolean isDefault
     ) {
-        this.sourceNode = sourceNode != null ? sourceNode.trim() : null;
-        this.targetNode = targetNode != null ? targetNode.trim() : null;
-        this.condition = condition != null && !condition.isBlank() ? condition.trim() : null;
+        return new WorkflowEdge(sourceNode, targetNode, condition, Boolean.TRUE.equals(isDefault));
     }
 
     public WorkflowEdge(String sourceNode, String targetNode) {
-        this(sourceNode, targetNode, null);
+        this(sourceNode, targetNode, null, false);
+    }
+
+    public WorkflowEdge(String sourceNode, String targetNode, String condition) {
+        this(sourceNode, targetNode, condition, false);
     }
 }

@@ -125,6 +125,7 @@ com.agent
 ## 🚀 Quick Start
 
 ### 1. Build the Standalone Fat JAR
+
 Use the included Windows batch script or Maven to compile and package the shaded application:
 ```cmd
 build.bat
@@ -132,6 +133,7 @@ build.bat
 *(Or run `mvn clean package`)*. This produces the all-inclusive Fat JAR in `target/computer-agent-1.0.0-SNAPSHOT.jar`.
 
 ### 2. Run the Swarm CLI
+
 Launch the interactive CLI orchestrator:
 ```cmd
 swarm.bat
@@ -143,19 +145,22 @@ swarm.bat
 ## 💡 Example CLI Prompts
 
 ### Codebase Exploration & Architectural Analysis
-```
-User > explain me about this project working E:\computer-agent\src\main\java\com\agent
+
+```text
+User > Explain how this project works: E:\computer-agent\src\main\java\com\agent
 ```
 *The Orchestrator automatically delegates to `architect`, who inspects the directory structure with `listDirectory` and `readFileLines` to generate an architectural breakdown.*
 
 ### Desktop GUI & Application Actuation
-```
+
+```text
 User > Can you open notepad and type Hello World
 ```
 *The Orchestrator delegates to `gui_tester`, which triggers `pressHotkey("win")`, `typeText("notepad")`, and `pressHotkey("enter")` through the Human-In-The-Loop safety gate.*
 
 ### Autonomous Code Modification & Git Versioning
-```
+
+```text
 User > Developer, add a new unit test for FileSystemService. DevOps, review the git diff and commit the changes.
 ```
 *The Orchestrator leverages `delegateParallel` or sequential delegation: `developer` updates the test file, and `devops` runs `getGitStatus` and `getGitDiff`, prompting the user for approval via `commitChanges`.*
@@ -238,4 +243,5 @@ mvn test
 ---
 
 ## 📄 License
+
 This project is licensed under the Apache License, Version 2.0.
