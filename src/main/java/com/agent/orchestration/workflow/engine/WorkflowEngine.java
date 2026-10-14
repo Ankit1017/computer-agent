@@ -231,7 +231,7 @@ public class WorkflowEngine {
         Set<String> startingActiveNodes = new LinkedHashSet<>();
         startingActiveNodes.add(graph.startNodeId());
 
-        return runSuperstepLoop(executionThreadId, 0, startingActiveNodes, Collections.emptySet());
+        return runSuperstepLoop(executionThreadId, 0, startingActiveNodes, Collections.emptySet(), Collections.emptyList());
     }
 
     /**
@@ -297,17 +297,23 @@ public class WorkflowEngine {
             }
         }
 
-        return runSuperstepLoop(threadId.trim(), resumeSuperstepCount, startingActiveNodes, bypassedInterruptBeforeNodes);
+        List<String> completed = checkpoint.completedNodes() != null
+                ? checkpoint.completedNodes()
+                : Collections.emptyList();
+
+        return runSuperstepLoop(threadId.trim(), resumeSuperstepCount, startingActiveNodes, bypassedInterruptBeforeNodes, completed);
     }
 
     private WorkflowState runSuperstepLoop(
             String threadId,
             int initialSuperstepCount,
             Set<String> initialActiveNodes,
-            Set<String> initialBypassedInterruptBeforeNodes
+            Set<String> initialBypassedInterruptBeforeNodes,
+            List<String> initialCompletedNodes
     ) {
         Set<String> activeNodes = new LinkedHashSet<>(initialActiveNodes);
         Set<String> bypassedInterruptBeforeNodes = new HashSet<>(initialBypassedInterruptBeforeNodes);
+        List<String> completedNodeIds = new ArrayList<>(initialCompletedNodes);
         int superstepCount = initialSuperstepCount;
 
         log.info("[WORKFLOW] Commencing BSP workflow '{}' (threadId='{}') at superstep {} with active nodes: {}",
@@ -352,7 +358,8 @@ public class WorkflowEngine {
                         System.currentTimeMillis(),
                         WorkflowExecutionStatus.SUSPENDED,
                         interruptBeforeTriggers,
-                        "BEFORE"
+                        "BEFORE",
+                        completedNodeIds
                 );
                 checkpointer.save(suspendedCheckpoint);
                 return state;
@@ -438,6 +445,92 @@ public class WorkflowEngine {
                     state.applyUpdate(update);
                 }
 
+                // Mark current superstep nodes as successfully completed forward steps
+                completedNodeIds.addAll(executableNodeIds);
+
+            } catch (Throwable failure) {
+                Throwable rootCause = failure;
+                if (rootCause instanceof ExecutionException ee && ee.getCause() != null) {
+                    rootCause = ee.getCause();
+                }
+
+                boolean hasCompensatingNodes = completedNodeIds.stream()
+                        .map(graph::findNode)
+                        .filter(Optional::isPresent)
+                        .map(Optional::get)
+                        .anyMatch(WorkflowNode::hasCompensation);
+
+                if (!hasCompensatingNodes) {
+                    log.warn("[WORKFLOW] Failure during superstep {} with no compensable forward steps. Aborting without Saga rollback.",
+                            superstepCount);
+                    if (failure instanceof RuntimeException re) {
+                        throw re;
+                    } else if (failure instanceof Error err) {
+                        throw err;
+                    } else {
+                        throw new IllegalStateException("Workflow superstep " + superstepCount + " failed: " + rootCause.getMessage(), rootCause);
+                    }
+                }
+
+                log.warn("[WORKFLOW-SAGA] Superstep {} failed for workflow '{}' (threadId='{}'). Initiating LIFO Saga compensation for completed nodes: {}",
+                        superstepCount, graph.workflowId(), threadId, completedNodeIds);
+
+                List<String> compensatedNodes = new ArrayList<>();
+                List<String> reverseOrder = new ArrayList<>(completedNodeIds);
+                Collections.reverse(reverseOrder);
+
+                for (String completedId : reverseOrder) {
+                    WorkflowNode node = graph.findNode(completedId).orElse(null);
+                    if (node == null || !node.hasCompensation()) {
+                        continue;
+                    }
+
+                    String compAgentId = (node.compensationAgentId() != null && !node.compensationAgentId().isBlank())
+                            ? node.compensationAgentId().trim()
+                            : node.agentId();
+
+                    log.info("[WORKFLOW-SAGA] Executing compensation for node '{}' via agent '{}'", node.nodeId(), compAgentId);
+
+                    try {
+                        String compensationPrompt = formatCompensationPrompt(node, state.getData());
+                        String compRawResponse = agentInvoker.invoke(compAgentId, compensationPrompt);
+                        Map<String, Object> rawUpdate = outputParser.parseOutput(compRawResponse, node.nodeId() + "_compensation");
+                        Map<String, Object> firewalled = filterWriteUpdate(node, rawUpdate);
+                        if (firewalled != null && !firewalled.isEmpty()) {
+                            state.applyUpdate(firewalled);
+                        }
+                        compensatedNodes.add(node.nodeId());
+                        log.info("[WORKFLOW-SAGA] Successfully compensated node '{}'. Applied state keys: {}",
+                                node.nodeId(), firewalled != null ? firewalled.keySet() : Collections.emptySet());
+                    } catch (Exception e) {
+                        log.error("[WORKFLOW-SAGA] Compensation action failed for node '{}' (agent '{}'): {}",
+                                node.nodeId(), compAgentId, e.getMessage(), e);
+                    }
+                }
+
+                // Persist ROLLED_BACK checkpoint
+                WorkflowCheckpoint rolledBackCheckpoint = new WorkflowCheckpoint(
+                        threadId,
+                        graph.workflowId(),
+                        superstepCount,
+                        activeNodes,
+                        state.getData(),
+                        System.currentTimeMillis(),
+                        WorkflowExecutionStatus.ROLLED_BACK,
+                        Collections.emptySet(),
+                        null,
+                        completedNodeIds
+                );
+                checkpointer.save(rolledBackCheckpoint);
+                log.info("[WORKFLOW-SAGA] Saved ROLLED_BACK checkpoint for thread '{}'. Throwing WorkflowSagaRollbackException.", threadId);
+
+                throw new WorkflowSagaRollbackException(
+                        threadId,
+                        graph.workflowId(),
+                        rootCause,
+                        compensatedNodes,
+                        state
+                );
             } finally {
                 executor.shutdown();
             }
@@ -476,7 +569,8 @@ public class WorkflowEngine {
                     System.currentTimeMillis(),
                     stepStatus,
                     interruptAfterTriggers,
-                    interruptType
+                    interruptType,
+                    completedNodeIds
             );
             checkpointer.save(checkpoint);
             log.info("[WORKFLOW] Checkpoint saved for thread '{}' superstep {} (status={}). Next active nodes: {}",
@@ -598,6 +692,37 @@ public class WorkflowEngine {
                 "RESPONSE REQUIREMENT:\n" +
                 "Provide your response as a valid JSON object (optionally inside a ```json codeblock) " +
                 "containing the key-value updates to merge into the workflow state.";
+    }
+
+    /**
+     * Formats the prompt dispatched to the compensating agent when rolling back a completed node.
+     * Respects read contract scoping via {@link #filterReadState(WorkflowNode, Map)}.
+     *
+     * @param node the workflow node being compensated
+     * @param stateData detached state snapshot
+     * @return prompt containing scoped active state snapshot, compensation instructions, and format expectations
+     */
+    protected String formatCompensationPrompt(WorkflowNode node, Map<String, Object> stateData) {
+        Map<String, Object> scopedState = filterReadState(node, stateData);
+        String stateJson;
+        try {
+            stateJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(scopedState);
+        } catch (Exception e) {
+            stateJson = scopedState.toString();
+        }
+
+        String instruction = node.compensationInstruction() != null && !node.compensationInstruction().isBlank()
+                ? node.compensationInstruction().trim()
+                : "Rollback and revert any actions or mutations performed by node '" + node.nodeId() + "'.";
+
+        return "[[ ACTIVE WORKFLOW STATE ]]\n" +
+                stateJson + "\n" +
+                "====================================\n\n" +
+                "SAGA COMPENSATION / ROLLBACK INSTRUCTION:\n" +
+                instruction + "\n\n" +
+                "RESPONSE REQUIREMENT:\n" +
+                "Provide your response as a valid JSON object (optionally inside a ```json codeblock) " +
+                "containing the compensation key-value updates to merge into the workflow state.";
     }
 
     /**

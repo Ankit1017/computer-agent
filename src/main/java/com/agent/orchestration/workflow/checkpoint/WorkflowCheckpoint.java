@@ -5,16 +5,18 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 /**
  * Immutable point-in-time snapshot representing the execution state, graph topology
- * pointers, and cooperative interrupt status of a workflow run.
+ * pointers, cooperative interrupt status, and completed node history of a workflow run.
  *
  * @param threadId         unique identifier for the workflow execution run
  * @param workflowId       identifier of the executing WorkflowGraph
@@ -22,9 +24,10 @@ import java.util.Set;
  * @param activeNodes      set of target node IDs scheduled for the next superstep
  * @param stateData        deep snapshot of the WorkflowState payload
  * @param timestamp        epoch milliseconds when the checkpoint was created
- * @param status           lifecycle execution status (RUNNING, SUSPENDED, COMPLETED, FAILED)
+ * @param status           lifecycle execution status (RUNNING, SUSPENDED, COMPLETED, FAILED, ROLLED_BACK)
  * @param interruptedNodes set of node IDs that caused or are subject to an interrupt breakpoint
  * @param interruptType    type of interrupt ("BEFORE" or "AFTER"), or null if normal boundary
+ * @param completedNodes   chronological list of completed node IDs across supersteps for Saga rollbacks
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record WorkflowCheckpoint(
@@ -36,7 +39,8 @@ public record WorkflowCheckpoint(
         @JsonProperty("timestamp") long timestamp,
         @JsonProperty("status") WorkflowExecutionStatus status,
         @JsonProperty("interruptedNodes") Set<String> interruptedNodes,
-        @JsonProperty("interruptType") String interruptType
+        @JsonProperty("interruptType") String interruptType,
+        @JsonProperty("completedNodes") List<String> completedNodes
 ) {
 
     public WorkflowCheckpoint {
@@ -51,6 +55,9 @@ public record WorkflowCheckpoint(
         interruptedNodes = interruptedNodes != null
                 ? Collections.unmodifiableSet(new LinkedHashSet<>(interruptedNodes))
                 : Collections.emptySet();
+        completedNodes = completedNodes != null
+                ? Collections.unmodifiableList(new ArrayList<>(completedNodes))
+                : Collections.emptyList();
 
         if (status == null) {
             status = isTerminal(activeNodes)
@@ -73,7 +80,8 @@ public record WorkflowCheckpoint(
             @JsonProperty("timestamp") Long timestamp,
             @JsonProperty("status") WorkflowExecutionStatus status,
             @JsonProperty("interruptedNodes") Set<String> interruptedNodes,
-            @JsonProperty("interruptType") String interruptType
+            @JsonProperty("interruptType") String interruptType,
+            @JsonProperty("completedNodes") List<String> completedNodes
     ) {
         return new WorkflowCheckpoint(
                 threadId,
@@ -84,8 +92,23 @@ public record WorkflowCheckpoint(
                 timestamp != null ? timestamp : System.currentTimeMillis(),
                 status,
                 interruptedNodes,
-                interruptType
+                interruptType,
+                completedNodes
         );
+    }
+
+    public WorkflowCheckpoint(
+            String threadId,
+            String workflowId,
+            int superstep,
+            Set<String> activeNodes,
+            Map<String, Object> stateData,
+            long timestamp,
+            WorkflowExecutionStatus status,
+            Set<String> interruptedNodes,
+            String interruptType
+    ) {
+        this(threadId, workflowId, superstep, activeNodes, stateData, timestamp, status, interruptedNodes, interruptType, Collections.emptyList());
     }
 
     public WorkflowCheckpoint(
@@ -105,7 +128,8 @@ public record WorkflowCheckpoint(
                 timestamp,
                 isTerminal(activeNodes) ? WorkflowExecutionStatus.COMPLETED : WorkflowExecutionStatus.RUNNING,
                 Collections.emptySet(),
-                null
+                null,
+                Collections.emptyList()
         );
     }
 
@@ -127,6 +151,11 @@ public record WorkflowCheckpoint(
     @JsonIgnore
     public boolean isCompleted() {
         return status == WorkflowExecutionStatus.COMPLETED;
+    }
+
+    @JsonIgnore
+    public boolean isRolledBack() {
+        return status == WorkflowExecutionStatus.ROLLED_BACK;
     }
 
     private static boolean isTerminal(Set<String> nodes) {

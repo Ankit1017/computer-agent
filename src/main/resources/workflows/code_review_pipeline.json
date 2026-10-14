@@ -1,0 +1,46 @@
+{
+  "workflowId": "code_review_pipeline",
+  "description": "Automated multi-stage code review, remediation, and human-verified staging pipeline.",
+  "startNodeId": "analyze_architecture",
+  "nodes": [
+    {
+      "nodeId": "analyze_architecture",
+      "agentId": "architect",
+      "taskInstruction": "Analyze codebase architecture, design invariants, and produce review notes.",
+      "readChannels": ["repository", "pull_request"],
+      "writeChannels": ["notes", "findings", "status"]
+    },
+    {
+      "nodeId": "implement_fixes",
+      "agentId": "developer",
+      "taskInstruction": "Implement code modifications and remediation based on architectural findings.",
+      "compensationAgentId": "developer",
+      "compensationInstruction": "Revert uncommitted source file changes and reset git workspace to clean head.",
+      "readChannels": ["findings", "notes"],
+      "writeChannels": ["modifications", "status"]
+    },
+    {
+      "nodeId": "verify_and_stage",
+      "agentId": "devops",
+      "taskInstruction": "Run unit verification tests and stage commit.",
+      "interruptBefore": true,
+      "readChannels": ["modifications", "status"],
+      "writeChannels": ["artifacts", "status"]
+    }
+  ],
+  "edges": [
+    {
+      "sourceNode": "analyze_architecture",
+      "targetNode": "implement_fixes"
+    },
+    {
+      "sourceNode": "implement_fixes",
+      "targetNode": "verify_and_stage"
+    },
+    {
+      "sourceNode": "verify_and_stage",
+      "targetNode": "__END__"
+    }
+  ],
+  "listChannels": ["notes", "findings", "artifacts"]
+}

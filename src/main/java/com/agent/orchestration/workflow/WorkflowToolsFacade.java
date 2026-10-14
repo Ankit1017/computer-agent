@@ -2,6 +2,7 @@ package com.agent.orchestration.workflow;
 
 import com.agent.config.AgentConfig;
 import com.agent.factory.SubAgentFactory;
+import com.agent.orchestration.workflow.checkpoint.WorkflowExecutionStatus;
 import com.agent.orchestration.workflow.model.SequenceStep;
 import com.agent.orchestration.workflow.model.WorkflowExecutionResult;
 import com.agent.orchestration.workflow.services.WorkflowRegistryService;
@@ -144,8 +145,11 @@ public class WorkflowToolsFacade {
     }
 
     private String formatExecutionReport(String title, WorkflowExecutionResult result) {
+        String reportTitle = (result != null && result.status() == WorkflowExecutionStatus.ROLLED_BACK)
+                ? "WORKFLOW SAGA ROLLBACK REPORT"
+                : title;
         StringBuilder sb = new StringBuilder();
-        sb.append("=== ").append(title).append(" ===\n");
+        sb.append("=== ").append(reportTitle).append(" ===\n");
         sb.append("Workflow ID: ").append(result.workflowId()).append("\n");
         sb.append("Thread ID: ").append(result.threadId()).append("\n");
         sb.append("Status: ").append(result.status()).append("\n");

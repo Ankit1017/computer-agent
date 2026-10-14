@@ -59,6 +59,16 @@ public record WorkflowGraph(
 
     public WorkflowGraph(
             String workflowId,
+            String startNodeId,
+            List<WorkflowNode> nodes,
+            List<WorkflowEdge> edges,
+            List<String> listChannels
+    ) {
+        this(workflowId, null, startNodeId, nodes, edges, listChannels);
+    }
+
+    public WorkflowGraph(
+            String workflowId,
             String description,
             String startNodeId,
             List<WorkflowNode> nodes,

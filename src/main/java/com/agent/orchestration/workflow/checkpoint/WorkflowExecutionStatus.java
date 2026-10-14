@@ -23,5 +23,10 @@ public enum WorkflowExecutionStatus {
     /**
      * Workflow terminated abnormally due to an unhandled exception or routing failure.
      */
-    FAILED
+    FAILED,
+
+    /**
+     * Workflow terminated abnormally and completed compensating rollback actions (Saga pattern).
+     */
+    ROLLED_BACK
 }

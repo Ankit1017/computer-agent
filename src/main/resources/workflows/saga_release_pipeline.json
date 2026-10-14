@@ -1,0 +1,47 @@
+{
+  "workflowId": "saga_release_pipeline",
+  "description": "Enterprise release deployment pipeline with automated Saga pattern compensating rollbacks.",
+  "startNodeId": "build_artifact",
+  "nodes": [
+    {
+      "nodeId": "build_artifact",
+      "agentId": "developer",
+      "taskInstruction": "Compile sources and package application release artifact.",
+      "compensationAgentId": "developer",
+      "compensationInstruction": "Delete packaged release artifacts from build output directory.",
+      "readChannels": ["version", "commit"],
+      "writeChannels": ["artifacts", "status", "logs"]
+    },
+    {
+      "nodeId": "provision_staging",
+      "agentId": "devops",
+      "taskInstruction": "Provision ephemeral staging deployment environment.",
+      "compensationAgentId": "devops",
+      "compensationInstruction": "Deprovision and destroy ephemeral staging environment resources.",
+      "readChannels": ["artifacts", "status"],
+      "writeChannels": ["environment_url", "status", "logs"]
+    },
+    {
+      "nodeId": "smoke_test",
+      "agentId": "devops",
+      "taskInstruction": "Execute end-to-end synthetic health checks and smoke test suite on staging.",
+      "readChannels": ["environment_url", "status"],
+      "writeChannels": ["smoke_results", "status", "logs"]
+    }
+  ],
+  "edges": [
+    {
+      "sourceNode": "build_artifact",
+      "targetNode": "provision_staging"
+    },
+    {
+      "sourceNode": "provision_staging",
+      "targetNode": "smoke_test"
+    },
+    {
+      "sourceNode": "smoke_test",
+      "targetNode": "__END__"
+    }
+  ],
+  "listChannels": ["logs", "artifacts"]
+}

@@ -8,6 +8,7 @@ import com.agent.orchestration.workflow.checkpoint.WorkflowCheckpointer;
 import com.agent.orchestration.workflow.checkpoint.WorkflowExecutionStatus;
 import com.agent.orchestration.workflow.engine.WorkflowAgentInvoker;
 import com.agent.orchestration.workflow.engine.WorkflowEngine;
+import com.agent.orchestration.workflow.engine.WorkflowSagaRollbackException;
 import com.agent.orchestration.workflow.model.SequenceStep;
 import com.agent.orchestration.workflow.model.WorkflowEdge;
 import com.agent.orchestration.workflow.model.WorkflowExecutionResult;
@@ -148,6 +149,18 @@ public class WorkflowRegistryService {
         }
 
         try {
+            loadFromResource("workflows/code_review_pipeline.json");
+        } catch (Exception e) {
+            log.debug("Default classpath workflow 'workflows/code_review_pipeline.json' not present: {}", e.getMessage());
+        }
+
+        try {
+            loadFromResource("workflows/saga_release_pipeline.json");
+        } catch (Exception e) {
+            log.debug("Default classpath workflow 'workflows/saga_release_pipeline.json' not present: {}", e.getMessage());
+        }
+
+        try {
             loadFromDirectory(Path.of("workflows"));
         } catch (Exception e) {
             log.debug("Local 'workflows/' directory not present: {}", e.getMessage());
@@ -255,7 +268,9 @@ public class WorkflowRegistryService {
                     Boolean.TRUE.equals(step.interruptBefore()),
                     Boolean.TRUE.equals(step.interruptAfter()),
                     step.readChannels(),
-                    step.writeChannels()
+                    step.writeChannels(),
+                    step.compensationAgentId(),
+                    step.compensationInstruction()
             ));
         }
 
@@ -401,6 +416,13 @@ public class WorkflowRegistryService {
             if (node.interruptAfter()) {
                 sb.append(" [interruptAfter]");
             }
+            if (node.hasCompensation()) {
+                String compAgent = (node.compensationAgentId() != null && !node.compensationAgentId().isBlank())
+                        ? node.compensationAgentId().trim()
+                        : node.agentId();
+                String compInstruction = node.compensationInstruction() != null ? node.compensationInstruction() : "";
+                sb.append(" [compensation: agent='").append(compAgent).append("' instruction='").append(compInstruction).append("']");
+            }
             sb.append("\n");
         }
         sb.append("  Edges:\n");
@@ -494,7 +516,25 @@ public class WorkflowRegistryService {
             engine.setConfigResolver(this.configResolver);
         }
 
-        engine.execute(resolvedThreadId, initialState);
+        try {
+            engine.execute(resolvedThreadId, initialState);
+        } catch (WorkflowSagaRollbackException e) {
+            log.warn("[REGISTRY] Workflow '{}' failed and was rolled back via Saga in thread '{}': {}",
+                    graph.workflowId(), resolvedThreadId, e.getMessage());
+            WorkflowCheckpoint rollbackCheckpoint = checkpointer.loadLatest(resolvedThreadId).orElse(null);
+            Map<String, Object> finalData = e.getFinalState() != null ? e.getFinalState().getData()
+                    : (rollbackCheckpoint != null ? rollbackCheckpoint.stateData() : state.getData());
+            String rollbackMsg = "Workflow '" + graph.workflowId() + "' failed and was rolled back via Saga in LIFO order for nodes "
+                    + e.getCompensatedNodes() + ". Failure cause: " + (e.getOriginalCause() != null ? e.getOriginalCause().getMessage() : "unknown");
+            return new WorkflowExecutionResult(
+                    resolvedThreadId,
+                    graph.workflowId(),
+                    WorkflowExecutionStatus.ROLLED_BACK,
+                    Collections.emptySet(),
+                    finalData,
+                    rollbackMsg
+            );
+        }
 
         WorkflowCheckpoint latestCheckpoint = checkpointer.loadLatest(resolvedThreadId).orElse(null);
         WorkflowExecutionStatus status = (latestCheckpoint != null && latestCheckpoint.status() != null)
@@ -508,6 +548,8 @@ public class WorkflowRegistryService {
         String message;
         if (status == WorkflowExecutionStatus.SUSPENDED) {
             message = "Workflow execution suspended at node(s) " + interruptedNodes + " in thread '" + resolvedThreadId + "'.";
+        } else if (status == WorkflowExecutionStatus.ROLLED_BACK) {
+            message = "Workflow '" + graph.workflowId() + "' was rolled back via Saga.";
         } else {
             message = "Workflow '" + graph.workflowId() + "' completed successfully.";
         }
@@ -554,7 +596,25 @@ public class WorkflowRegistryService {
             engine.setConfigResolver(this.configResolver);
         }
 
-        engine.resume(resolvedThreadId, humanUpdates);
+        try {
+            engine.resume(resolvedThreadId, humanUpdates);
+        } catch (WorkflowSagaRollbackException e) {
+            log.warn("[REGISTRY] Resumed workflow '{}' failed and was rolled back via Saga in thread '{}': {}",
+                    graph.workflowId(), resolvedThreadId, e.getMessage());
+            WorkflowCheckpoint rollbackCheckpoint = checkpointer.loadLatest(resolvedThreadId).orElse(null);
+            Map<String, Object> finalData = e.getFinalState() != null ? e.getFinalState().getData()
+                    : (rollbackCheckpoint != null ? rollbackCheckpoint.stateData() : state.getData());
+            String rollbackMsg = "Workflow '" + graph.workflowId() + "' failed during resumption and was rolled back via Saga in LIFO order for nodes "
+                    + e.getCompensatedNodes() + ". Failure cause: " + (e.getOriginalCause() != null ? e.getOriginalCause().getMessage() : "unknown");
+            return new WorkflowExecutionResult(
+                    resolvedThreadId,
+                    graph.workflowId(),
+                    WorkflowExecutionStatus.ROLLED_BACK,
+                    Collections.emptySet(),
+                    finalData,
+                    rollbackMsg
+            );
+        }
 
         WorkflowCheckpoint latestCheckpoint = checkpointer.loadLatest(resolvedThreadId).orElse(null);
         WorkflowExecutionStatus status = (latestCheckpoint != null && latestCheckpoint.status() != null)
@@ -568,6 +628,8 @@ public class WorkflowRegistryService {
         String message;
         if (status == WorkflowExecutionStatus.SUSPENDED) {
             message = "Workflow execution re-suspended at node(s) " + interruptedNodes + " in thread '" + resolvedThreadId + "'.";
+        } else if (status == WorkflowExecutionStatus.ROLLED_BACK) {
+            message = "Workflow '" + graph.workflowId() + "' was rolled back via Saga.";
         } else {
             message = "Workflow '" + graph.workflowId() + "' resumed and completed successfully.";
         }
