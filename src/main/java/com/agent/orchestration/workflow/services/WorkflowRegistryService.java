@@ -59,6 +59,7 @@ public class WorkflowRegistryService {
     private final WorkflowParserService parserService;
     private WorkflowAgentInvoker agentInvoker;
     private WorkflowCheckpointer checkpointer;
+    private java.util.function.Function<String, com.agent.config.AgentConfig> configResolver;
 
     public WorkflowRegistryService() {
         this((WorkflowAgentInvoker) null, new InMemoryCheckpointer(), new WorkflowParserService());
@@ -76,40 +77,58 @@ public class WorkflowRegistryService {
         this.agentInvoker = agentInvoker;
         this.checkpointer = checkpointer != null ? checkpointer : new InMemoryCheckpointer();
         this.parserService = parserService != null ? parserService : new WorkflowParserService();
+        this.configResolver = agentInvoker != null ? agentInvoker::getConfig : null;
         discoverDefaultWorkflows();
     }
 
     public WorkflowRegistryService(SubAgentFactory agentFactory) {
-        this(WorkflowEngine.adaptAgentFactory(agentFactory), new InMemoryCheckpointer(), new WorkflowParserService());
+        this(agentFactory, new InMemoryCheckpointer(), new WorkflowParserService());
     }
 
     public WorkflowRegistryService(SubAgentFactory agentFactory, WorkflowCheckpointer checkpointer) {
-        this(WorkflowEngine.adaptAgentFactory(agentFactory), checkpointer, new WorkflowParserService());
+        this(agentFactory, checkpointer, new WorkflowParserService());
     }
 
     public WorkflowRegistryService(SubAgentFactory agentFactory, WorkflowCheckpointer checkpointer, WorkflowParserService parserService) {
         this(WorkflowEngine.adaptAgentFactory(agentFactory), checkpointer, parserService);
+        this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowRegistryService(OrchestrationService orchestrationService) {
-        this(adaptOrchestrationService(orchestrationService), new InMemoryCheckpointer(), new WorkflowParserService());
+        this(orchestrationService, new InMemoryCheckpointer(), new WorkflowParserService());
     }
 
     public WorkflowRegistryService(OrchestrationService orchestrationService, WorkflowCheckpointer checkpointer) {
-        this(adaptOrchestrationService(orchestrationService), checkpointer, new WorkflowParserService());
+        this(orchestrationService, checkpointer, new WorkflowParserService());
     }
 
     public WorkflowRegistryService(OrchestrationService orchestrationService, WorkflowCheckpointer checkpointer, WorkflowParserService parserService) {
         this(adaptOrchestrationService(orchestrationService), checkpointer, parserService);
+        this.configResolver = agentId -> orchestrationService != null && orchestrationService.getAgentFactory() != null
+                ? orchestrationService.getAgentFactory().getConfig(agentId)
+                : null;
     }
 
     /**
      * Adapts an {@link OrchestrationService} into a {@link WorkflowAgentInvoker}, preserving
-     * Core Memory auto-injection and retry resilience.
+     * Core Memory auto-injection, retry resilience, and AgentConfig contract lookup.
      */
     public static WorkflowAgentInvoker adaptOrchestrationService(OrchestrationService orchestrationService) {
         Objects.requireNonNull(orchestrationService, "orchestrationService must not be null");
-        return (agentId, taskPrompt) -> orchestrationService.routeTask(agentId, taskPrompt);
+        return new WorkflowAgentInvoker() {
+            @Override
+            public String invoke(String agentId, String taskPrompt) {
+                return orchestrationService.routeTask(agentId, taskPrompt);
+            }
+
+            @Override
+            public com.agent.config.AgentConfig getConfig(String agentId) {
+                if (orchestrationService.getAgentFactory() != null) {
+                    return orchestrationService.getAgentFactory().getConfig(agentId);
+                }
+                return null;
+            }
+        };
     }
 
     /**
@@ -258,6 +277,12 @@ public class WorkflowRegistryService {
             if (node.taskInstruction() != null && !node.taskInstruction().isBlank()) {
                 sb.append(" - ").append(node.taskInstruction());
             }
+            if (node.readChannels() != null && !node.readChannels().isEmpty()) {
+                sb.append(" [readChannels: ").append(node.readChannels()).append("]");
+            }
+            if (node.writeChannels() != null && !node.writeChannels().isEmpty()) {
+                sb.append(" [writeChannels: ").append(node.writeChannels()).append("]");
+            }
             if (node.interruptBefore()) {
                 sb.append(" [interruptBefore]");
             }
@@ -353,6 +378,9 @@ public class WorkflowRegistryService {
 
         WorkflowState state = createInitialState(graph, initialState);
         WorkflowEngine engine = new WorkflowEngine(graph, agentInvoker, state, checkpointer);
+        if (this.configResolver != null) {
+            engine.setConfigResolver(this.configResolver);
+        }
 
         engine.execute(resolvedThreadId, initialState);
 
@@ -410,6 +438,9 @@ public class WorkflowRegistryService {
 
         WorkflowState state = createInitialState(graph, Collections.emptyMap());
         WorkflowEngine engine = new WorkflowEngine(graph, agentInvoker, state, checkpointer);
+        if (this.configResolver != null) {
+            engine.setConfigResolver(this.configResolver);
+        }
 
         engine.resume(resolvedThreadId, humanUpdates);
 
@@ -445,6 +476,17 @@ public class WorkflowRegistryService {
 
     public void setAgentInvoker(WorkflowAgentInvoker agentInvoker) {
         this.agentInvoker = agentInvoker;
+        if (this.configResolver == null && agentInvoker != null) {
+            this.configResolver = agentInvoker::getConfig;
+        }
+    }
+
+    public java.util.function.Function<String, com.agent.config.AgentConfig> getConfigResolver() {
+        return configResolver;
+    }
+
+    public void setConfigResolver(java.util.function.Function<String, com.agent.config.AgentConfig> configResolver) {
+        this.configResolver = configResolver;
     }
 
     public WorkflowCheckpointer getCheckpointer() {

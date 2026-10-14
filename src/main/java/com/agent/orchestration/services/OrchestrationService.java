@@ -23,6 +23,10 @@ public class OrchestrationService implements AutoCloseable {
         this.blackboardService = Objects.requireNonNull(blackboardService, "blackboardService must not be null");
     }
 
+    public SubAgentFactory getAgentFactory() {
+        return agentFactory;
+    }
+
     public String routeTask(String agentId, String task) {
         System.out.println("[ORCHESTRATOR] Routing task to '" + agentId + "': " + task);
         return executeWithRetry(agentId, task, 2); // 2 max attempts for standard routes

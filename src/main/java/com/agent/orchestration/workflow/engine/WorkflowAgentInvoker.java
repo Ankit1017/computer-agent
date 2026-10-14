@@ -1,5 +1,7 @@
 package com.agent.orchestration.workflow.engine;
 
+import com.agent.config.AgentConfig;
+
 /**
  * Functional interface for dispatching tasks to agents during workflow execution.
  * Allows decoupling the execution engine from concrete agent implementations
@@ -16,4 +18,14 @@ public interface WorkflowAgentInvoker {
      * @return textual response from the agent
      */
     String invoke(String agentId, String prompt);
+
+    /**
+     * Retrieves optional configuration and contract metadata for the specified agent.
+     *
+     * @param agentId identifier of the sub-agent
+     * @return AgentConfig if registered, or null
+     */
+    default AgentConfig getConfig(String agentId) {
+        return null;
+    }
 }

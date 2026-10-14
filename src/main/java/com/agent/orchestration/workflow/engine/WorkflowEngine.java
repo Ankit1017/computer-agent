@@ -69,6 +69,7 @@ public class WorkflowEngine {
     private final Duration stepTimeout;
     private final WorkflowCheckpointer checkpointer;
     private final ObjectMapper objectMapper;
+    private java.util.function.Function<String, com.agent.config.AgentConfig> configResolver;
 
     public WorkflowEngine(WorkflowGraph graph, WorkflowAgentInvoker agentInvoker) {
         this(graph, agentInvoker, new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
@@ -100,22 +101,27 @@ public class WorkflowEngine {
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory) {
         this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+        this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowCheckpointer checkpointer) {
         this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
+        this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, Duration stepTimeout) {
         this(graph, adaptAgentFactory(agentFactory), new WorkflowState(), new StateUpdateParser(), new ConditionEvaluator(), stepTimeout, null);
+        this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowState state) {
         this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, null);
+        this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(WorkflowGraph graph, SubAgentFactory agentFactory, WorkflowState state, WorkflowCheckpointer checkpointer) {
         this(graph, adaptAgentFactory(agentFactory), state, new StateUpdateParser(), new ConditionEvaluator(), DEFAULT_STEP_TIMEOUT, checkpointer);
+        this.configResolver = agentFactory != null ? agentFactory::getConfig : null;
     }
 
     public WorkflowEngine(
@@ -165,6 +171,15 @@ public class WorkflowEngine {
         this.stepTimeout = Objects.requireNonNull(stepTimeout, "stepTimeout must not be null");
         this.checkpointer = checkpointer != null ? checkpointer : new InMemoryCheckpointer();
         this.objectMapper = new ObjectMapper();
+        this.configResolver = agentId -> agentInvoker.getConfig(agentId);
+    }
+
+    public void setConfigResolver(java.util.function.Function<String, com.agent.config.AgentConfig> configResolver) {
+        this.configResolver = configResolver;
+    }
+
+    public java.util.function.Function<String, com.agent.config.AgentConfig> getConfigResolver() {
+        return configResolver;
     }
 
     /**
@@ -406,12 +421,15 @@ public class WorkflowEngine {
                     throw new IllegalStateException("Workflow superstep " + superstepCount + " was interrupted", e);
                 }
 
-                // Collect all partial updates from completed tasks
+                // Collect and firewall all partial updates from completed tasks
                 List<Map<String, Object>> updates = new ArrayList<>();
-                for (CompletableFuture<Map<String, Object>> future : futures) {
-                    Map<String, Object> update = future.join();
-                    if (update != null && !update.isEmpty()) {
-                        updates.add(update);
+                for (int i = 0; i < futures.size(); i++) {
+                    Map<String, Object> rawUpdate = futures.get(i).join();
+                    String executedNodeId = executableNodeIds.get(i);
+                    WorkflowNode executedNode = graph.findNode(executedNodeId).orElse(null);
+                    Map<String, Object> firewallUpdate = filterWriteUpdate(executedNode, rawUpdate);
+                    if (firewallUpdate != null && !firewallUpdate.isEmpty()) {
+                        updates.add(firewallUpdate);
                     }
                 }
 
@@ -556,18 +574,20 @@ public class WorkflowEngine {
 
     /**
      * Formats the prompt delivered to the executing sub-agent using an immutable
-     * state snapshot taken at the beginning of the superstep.
+     * state snapshot taken at the beginning of the superstep, filtered according
+     * to the effective readChannels contract.
      *
      * @param node the current workflow node to execute
      * @param stateData detached state snapshot
      * @return prompt containing active state snapshot, instructions, and format expectations
      */
     protected String formatPrompt(WorkflowNode node, Map<String, Object> stateData) {
+        Map<String, Object> scopedState = filterReadState(node, stateData);
         String stateJson;
         try {
-            stateJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(stateData);
+            stateJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(scopedState);
         } catch (Exception e) {
-            stateJson = stateData.toString();
+            stateJson = scopedState.toString();
         }
 
         return "[[ ACTIVE WORKFLOW STATE ]]\n" +
@@ -580,14 +600,127 @@ public class WorkflowEngine {
                 "containing the key-value updates to merge into the workflow state.";
     }
 
+    /**
+     * Resolves the effective readChannels for a given workflow node based on precedence:
+     * WorkflowNode override -> AgentConfig default -> empty (unrestricted).
+     */
+    public List<String> resolveEffectiveReadChannels(WorkflowNode node) {
+        if (node != null && node.readChannels() != null && !node.readChannels().isEmpty()) {
+            return node.readChannels();
+        }
+        if (node != null && node.agentId() != null) {
+            com.agent.config.AgentConfig config = resolveAgentConfig(node.agentId());
+            if (config != null && config.readChannels() != null && !config.readChannels().isEmpty()) {
+                return config.readChannels();
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    /**
+     * Resolves the effective writeChannels for a given workflow node based on precedence:
+     * WorkflowNode override -> AgentConfig default -> empty (unrestricted).
+     */
+    public List<String> resolveEffectiveWriteChannels(WorkflowNode node) {
+        if (node != null && node.writeChannels() != null && !node.writeChannels().isEmpty()) {
+            return node.writeChannels();
+        }
+        if (node != null && node.agentId() != null) {
+            com.agent.config.AgentConfig config = resolveAgentConfig(node.agentId());
+            if (config != null && config.writeChannels() != null && !config.writeChannels().isEmpty()) {
+                return config.writeChannels();
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    private com.agent.config.AgentConfig resolveAgentConfig(String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return null;
+        }
+        String normId = agentId.trim().toLowerCase();
+        if (configResolver != null) {
+            com.agent.config.AgentConfig config = configResolver.apply(normId);
+            if (config != null) {
+                return config;
+            }
+        }
+        if (agentInvoker != null) {
+            return agentInvoker.getConfig(normId);
+        }
+        return null;
+    }
+
+    /**
+     * Filters the active state snapshot according to effective readChannels.
+     * If readChannels is empty, access is unrestricted.
+     */
+    public Map<String, Object> filterReadState(WorkflowNode node, Map<String, Object> stateData) {
+        if (stateData == null || stateData.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<String> readChannels = resolveEffectiveReadChannels(node);
+        if (readChannels == null || readChannels.isEmpty()) {
+            return stateData; // Unrestricted access
+        }
+        Map<String, Object> scoped = new java.util.LinkedHashMap<>();
+        for (String ch : readChannels) {
+            if (stateData.containsKey(ch)) {
+                scoped.put(ch, stateData.get(ch));
+            }
+        }
+        log.debug("[WORKFLOW-CONTRACT] Node '{}' (agent '{}') read scoped to channels {}: injected keys={}",
+                node != null ? node.nodeId() : "unknown",
+                node != null ? node.agentId() : "unknown",
+                readChannels, scoped.keySet());
+        return scoped;
+    }
+
+    /**
+     * Filters parsed partial updates according to effective writeChannels.
+     * Any unauthorized channel write is stripped with a warning logged.
+     */
+    public Map<String, Object> filterWriteUpdate(WorkflowNode node, Map<String, Object> rawUpdate) {
+        if (rawUpdate == null || rawUpdate.isEmpty() || node == null) {
+            return rawUpdate != null ? rawUpdate : Collections.emptyMap();
+        }
+        List<String> writeChannels = resolveEffectiveWriteChannels(node);
+        if (writeChannels == null || writeChannels.isEmpty()) {
+            return rawUpdate; // Unrestricted write access
+        }
+
+        Set<String> allowedChannels = new HashSet<>(writeChannels);
+        String fallbackOutputKey = node.nodeId() + "_output";
+
+        Map<String, Object> filtered = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : rawUpdate.entrySet()) {
+            String key = entry.getKey();
+            if (allowedChannels.contains(key) || fallbackOutputKey.equals(key)) {
+                filtered.put(key, entry.getValue());
+            } else {
+                log.warn("[WORKFLOW-FIREWALL] Node '{}' (agent '{}') attempted unauthorized write to channel '{}'. Stripping key.",
+                        node.nodeId(), node.agentId(), key);
+            }
+        }
+        return filtered;
+    }
+
     public static WorkflowAgentInvoker adaptAgentFactory(SubAgentFactory agentFactory) {
         Objects.requireNonNull(agentFactory, "agentFactory must not be null");
-        return (agentId, prompt) -> {
-            WorkerAgent agent = agentFactory.getAgent(agentId);
-            if (agent == null) {
-                throw new IllegalArgumentException("SubAgentFactory contains no registered agent for id '" + agentId + "'");
+        return new WorkflowAgentInvoker() {
+            @Override
+            public String invoke(String agentId, String prompt) {
+                WorkerAgent agent = agentFactory.getAgent(agentId);
+                if (agent == null) {
+                    throw new IllegalArgumentException("SubAgentFactory contains no registered agent for id '" + agentId + "'");
+                }
+                return agent.execute(prompt);
             }
-            return agent.execute(prompt);
+
+            @Override
+            public com.agent.config.AgentConfig getConfig(String agentId) {
+                return agentFactory.getConfig(agentId);
+            }
         };
     }
 

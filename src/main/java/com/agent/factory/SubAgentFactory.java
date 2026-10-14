@@ -25,6 +25,7 @@ public class SubAgentFactory {
     private final ChatLanguageModel chatModel;
     private final ToolRegistry toolRegistry;
     private final Map<String, WorkerAgent> agents = new ConcurrentHashMap<>();
+    private final Map<String, AgentConfig> configs = new ConcurrentHashMap<>();
 
     /**
      * Creates a new SubAgentFactory.
@@ -61,6 +62,7 @@ public class SubAgentFactory {
                 .build();
 
         String normalizedId = config.id().trim().toLowerCase();
+        configs.put(normalizedId, config);
         agents.put(normalizedId, agent);
         return agent;
     }
@@ -89,5 +91,52 @@ public class SubAgentFactory {
         if (agentId != null && !agentId.isBlank() && agent != null) {
             agents.put(agentId.trim().toLowerCase(), agent);
         }
+    }
+
+    /**
+     * Registers a custom WorkerAgent instance and its associated AgentConfig.
+     *
+     * @param config the sub-agent specification
+     * @param agent  WorkerAgent instance
+     */
+    public void registerAgent(AgentConfig config, WorkerAgent agent) {
+        if (config != null && config.id() != null && !config.id().isBlank()) {
+            String normalizedId = config.id().trim().toLowerCase();
+            configs.put(normalizedId, config);
+            if (agent != null) {
+                agents.put(normalizedId, agent);
+            }
+        }
+    }
+
+    /**
+     * Registers an AgentConfig without immediately creating an active WorkerAgent proxy.
+     *
+     * @param config the sub-agent specification
+     */
+    public void registerConfig(AgentConfig config) {
+        if (config != null && config.id() != null && !config.id().isBlank()) {
+            configs.put(config.id().trim().toLowerCase(), config);
+        }
+    }
+
+    /**
+     * Retrieves an AgentConfig by ID (case-insensitive and trimmed).
+     *
+     * @param agentId unique agent identifier
+     * @return the AgentConfig, or null if not found
+     */
+    public AgentConfig getConfig(String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return null;
+        }
+        return configs.get(agentId.trim().toLowerCase());
+    }
+
+    /**
+     * Returns an unmodifiable map of registered AgentConfigs.
+     */
+    public Map<String, AgentConfig> getConfigs() {
+        return java.util.Collections.unmodifiableMap(configs);
     }
 }
