@@ -11,6 +11,9 @@ import com.agent.orchestration.workflow.model.WorkflowGraph;
 import com.agent.orchestration.workflow.model.WorkflowNode;
 import com.agent.orchestration.workflow.model.WorkflowRoutingException;
 import com.agent.orchestration.workflow.state.WorkflowState;
+import com.agent.telemetry.SwarmSpan;
+import com.agent.telemetry.SwarmTelemetry;
+import com.agent.telemetry.TelemetryAttributes;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -319,90 +322,116 @@ public class WorkflowEngine {
         log.info("[WORKFLOW] Commencing BSP workflow '{}' (threadId='{}') at superstep {} with active nodes: {}",
                 graph.workflowId(), threadId, superstepCount, activeNodes);
 
-        while (!activeNodes.isEmpty() && !isTerminated(activeNodes)) {
-            // Exclude terminal __END__ node markers from active dispatch
-            List<String> executableNodeIds = activeNodes.stream()
-                    .filter(id -> !WorkflowGraph.END_NODE.equalsIgnoreCase(id))
-                    .toList();
+        SwarmSpan runSpan = SwarmTelemetry.startSpan("workflow.run");
+        runSpan.setAttribute(TelemetryAttributes.WORKFLOW_ID, graph.workflowId());
+        runSpan.setAttribute(TelemetryAttributes.THREAD_ID, threadId);
 
-            if (executableNodeIds.isEmpty()) {
-                log.info("[WORKFLOW] No executable nodes remaining in superstep {}. Terminating.", superstepCount);
-                break;
-            }
+        try {
+            while (!activeNodes.isEmpty() && !isTerminated(activeNodes)) {
+                // Exclude terminal __END__ node markers from active dispatch
+                List<String> executableNodeIds = activeNodes.stream()
+                        .filter(id -> !WorkflowGraph.END_NODE.equalsIgnoreCase(id))
+                        .toList();
 
-            // =================================================================
-            // Pre-Execution Check: interruptBefore Breakpoints
-            // =================================================================
-            Set<String> interruptBeforeTriggers = new LinkedHashSet<>();
-            for (String nodeId : executableNodeIds) {
-                if (bypassedInterruptBeforeNodes.contains(nodeId)) {
-                    continue;
+                if (executableNodeIds.isEmpty()) {
+                    log.info("[WORKFLOW] No executable nodes remaining in superstep {}. Terminating.", superstepCount);
+                    break;
                 }
-                WorkflowNode node = graph.findNode(nodeId).orElse(null);
-                if (node != null && node.interruptBefore()) {
-                    interruptBeforeTriggers.add(nodeId);
-                }
-            }
 
-            if (!interruptBeforeTriggers.isEmpty()) {
-                int suspendedStep = superstepCount + 1;
-                log.info("[WORKFLOW] Pre-execution interrupt triggered for node(s): {} at superstep {} in thread '{}'. Suspending.",
-                        interruptBeforeTriggers, suspendedStep, threadId);
-
-                WorkflowCheckpoint suspendedCheckpoint = new WorkflowCheckpoint(
-                        threadId,
-                        graph.workflowId(),
-                        suspendedStep,
-                        activeNodes,
-                        state.getData(),
-                        System.currentTimeMillis(),
-                        WorkflowExecutionStatus.SUSPENDED,
-                        interruptBeforeTriggers,
-                        "BEFORE",
-                        completedNodeIds
-                );
-                checkpointer.save(suspendedCheckpoint);
-                return state;
-            }
-
-            // Clear single-step bypasses once past pre-execution checks
-            bypassedInterruptBeforeNodes.clear();
-
-            if (++superstepCount > MAX_STEP_LIMIT) {
-                throw new IllegalStateException(
-                        "Workflow '" + graph.workflowId() + "' exceeded maximum step limit ("
-                                + MAX_STEP_LIMIT + "). Possible infinite loop or invalid cycle detected."
-                );
-            }
-
-            log.info("[WORKFLOW] Superstep {}: Concurrently executing {} node(s): {}",
-                    superstepCount, executableNodeIds.size(), executableNodeIds);
-
-            // =================================================================
-            // Phase A: Concurrent Execution (Virtual Threads)
-            // =================================================================
-            Map<String, Object> stateSnapshot = state.getData();
-            List<CompletableFuture<Map<String, Object>>> futures = new ArrayList<>();
-            ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-
-            try {
+                // =================================================================
+                // Pre-Execution Check: interruptBefore Breakpoints
+                // =================================================================
+                Set<String> interruptBeforeTriggers = new LinkedHashSet<>();
                 for (String nodeId : executableNodeIds) {
-                    WorkflowNode node = graph.findNode(nodeId)
-                            .orElseThrow(() -> new IllegalStateException(
-                                    "Node '" + nodeId + "' does not exist in workflow '" + graph.workflowId() + "'"
-                            ));
-
-                    final int currentSuperstep = superstepCount;
-                    CompletableFuture<Map<String, Object>> future = CompletableFuture.supplyAsync(() -> {
-                        log.info("[WORKFLOW] [Task] Node '{}' dispatched to agent '{}'", node.nodeId(), node.agentId());
-                        String prompt = formatPrompt(node, stateSnapshot);
-                        String memoryId = threadId + ":" + node.nodeId() + ":step" + currentSuperstep;
-                        String rawResponse = agentInvoker.invoke(node.agentId(), prompt, memoryId);
-                        return outputParser.parseOutput(rawResponse, node.nodeId() + "_output");
-                    }, executor);
-
-                    futures.add(future);
+                    if (bypassedInterruptBeforeNodes.contains(nodeId)) {
+                        continue;
+                    }
+                    WorkflowNode node = graph.findNode(nodeId).orElse(null);
+                    if (node != null && node.interruptBefore()) {
+                        interruptBeforeTriggers.add(nodeId);
+                    }
                 }
+
+                if (!interruptBeforeTriggers.isEmpty()) {
+                    int suspendedStep = superstepCount + 1;
+                    log.info("[WORKFLOW] Pre-execution interrupt triggered for node(s): {} at superstep {} in thread '{}'. Suspending.",
+                            interruptBeforeTriggers, suspendedStep, threadId);
+
+                    WorkflowCheckpoint suspendedCheckpoint = new WorkflowCheckpoint(
+                            threadId,
+                            graph.workflowId(),
+                            suspendedStep,
+                            activeNodes,
+                            state.getData(),
+                            System.currentTimeMillis(),
+                            WorkflowExecutionStatus.SUSPENDED,
+                            interruptBeforeTriggers,
+                            "BEFORE",
+                            completedNodeIds
+                    );
+                    checkpointer.save(suspendedCheckpoint);
+                    return state;
+                }
+
+                // Clear single-step bypasses once past pre-execution checks
+                bypassedInterruptBeforeNodes.clear();
+
+                if (++superstepCount > MAX_STEP_LIMIT) {
+                    throw new IllegalStateException(
+                            "Workflow '" + graph.workflowId() + "' exceeded maximum step limit ("
+                                    + MAX_STEP_LIMIT + "). Possible infinite loop or invalid cycle detected."
+                    );
+                }
+
+                log.info("[WORKFLOW] Superstep {}: Concurrently executing {} node(s): {}",
+                        superstepCount, executableNodeIds.size(), executableNodeIds);
+
+                // =================================================================
+                // Phase A: Concurrent Execution (Virtual Threads)
+                // =================================================================
+                Map<String, Object> stateSnapshot = state.getData();
+                List<CompletableFuture<Map<String, Object>>> futures = new ArrayList<>();
+                ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+
+                try (SwarmSpan superstepSpan = SwarmTelemetry.startSpan("workflow.superstep", runSpan)) {
+                    superstepSpan.setAttribute(TelemetryAttributes.WORKFLOW_ID, graph.workflowId());
+                    superstepSpan.setAttribute(TelemetryAttributes.THREAD_ID, threadId);
+                    superstepSpan.setAttribute(TelemetryAttributes.SUPERSTEP_INDEX, superstepCount);
+                    superstepSpan.setAttribute(TelemetryAttributes.LLM_CONTEXT_ACTIVE_STATE_JSON, stateSnapshot.toString());
+
+                    try {
+                        for (String nodeId : executableNodeIds) {
+                            WorkflowNode node = graph.findNode(nodeId)
+                                    .orElseThrow(() -> new IllegalStateException(
+                                            "Node '" + nodeId + "' does not exist in workflow '" + graph.workflowId() + "'"
+                                    ));
+
+                            final int currentSuperstep = superstepCount;
+                            CompletableFuture<Map<String, Object>> future = CompletableFuture.supplyAsync(() -> {
+                                try (SwarmSpan invokeSpan = SwarmTelemetry.startSpan("agent.invoke", superstepSpan)) {
+                                    log.info("[WORKFLOW] [Task] Node '{}' dispatched to agent '{}'", node.nodeId(), node.agentId());
+                                    String prompt = formatPrompt(node, stateSnapshot);
+                                    String memoryId = threadId + ":" + node.nodeId() + ":step" + currentSuperstep;
+
+                                    invokeSpan.setAttribute(TelemetryAttributes.AGENT_ID, node.agentId());
+                                    invokeSpan.setAttribute(TelemetryAttributes.MEMORY_ID, memoryId);
+                                    invokeSpan.setAttribute(TelemetryAttributes.WORKFLOW_ID, graph.workflowId());
+                                    invokeSpan.setAttribute(TelemetryAttributes.WORKFLOW_NODE_ID, node.nodeId());
+                                    invokeSpan.setAttribute(TelemetryAttributes.SUPERSTEP_INDEX, currentSuperstep);
+                                    invokeSpan.setAttribute(TelemetryAttributes.THREAD_ID, threadId);
+                                    invokeSpan.setAttribute(TelemetryAttributes.LLM_CONTEXT_SYSTEM_PROMPT, prompt);
+
+                                    int promptTokens = SwarmTelemetry.estimateTokens(prompt);
+                                    String rawResponse = agentInvoker.invoke(node.agentId(), prompt, memoryId);
+                                    int completionTokens = SwarmTelemetry.estimateTokens(rawResponse);
+                                    invokeSpan.recordTokenUsage(promptTokens, completionTokens);
+
+                                    return outputParser.parseOutput(rawResponse, node.nodeId() + "_output");
+                                }
+                            }, executor);
+
+                            futures.add(future);
+                        }
 
                 // =================================================================
                 // Phase B: Synchronization Barrier & State Update
@@ -481,33 +510,49 @@ public class WorkflowEngine {
                 List<String> reverseOrder = new ArrayList<>(completedNodeIds);
                 Collections.reverse(reverseOrder);
 
-                for (String completedId : reverseOrder) {
-                    WorkflowNode node = graph.findNode(completedId).orElse(null);
-                    if (node == null || !node.hasCompensation()) {
-                        continue;
-                    }
+                try (SwarmSpan rollbackSpan = SwarmTelemetry.startSpan("workflow.saga.rollback", runSpan)) {
+                    rollbackSpan.setAttribute(TelemetryAttributes.WORKFLOW_ID, graph.workflowId());
+                    rollbackSpan.setAttribute(TelemetryAttributes.THREAD_ID, threadId);
 
-                    String compAgentId = (node.compensationAgentId() != null && !node.compensationAgentId().isBlank())
-                            ? node.compensationAgentId().trim()
-                            : node.agentId();
-
-                    log.info("[WORKFLOW-SAGA] Executing compensation for node '{}' via agent '{}'", node.nodeId(), compAgentId);
-
-                    try {
-                        String compensationPrompt = formatCompensationPrompt(node, state.getData());
-                        String compMemoryId = threadId + ":" + node.nodeId() + ":compensation";
-                        String compRawResponse = agentInvoker.invoke(compAgentId, compensationPrompt, compMemoryId);
-                        Map<String, Object> rawUpdate = outputParser.parseOutput(compRawResponse, node.nodeId() + "_compensation");
-                        Map<String, Object> firewalled = filterWriteUpdate(node, rawUpdate);
-                        if (firewalled != null && !firewalled.isEmpty()) {
-                            state.applyUpdate(firewalled);
+                    for (String completedId : reverseOrder) {
+                        WorkflowNode node = graph.findNode(completedId).orElse(null);
+                        if (node == null || !node.hasCompensation()) {
+                            continue;
                         }
-                        compensatedNodes.add(node.nodeId());
-                        log.info("[WORKFLOW-SAGA] Successfully compensated node '{}'. Applied state keys: {}",
-                                node.nodeId(), firewalled != null ? firewalled.keySet() : Collections.emptySet());
-                    } catch (Exception e) {
-                        log.error("[WORKFLOW-SAGA] Compensation action failed for node '{}' (agent '{}'): {}",
-                                node.nodeId(), compAgentId, e.getMessage(), e);
+
+                        String compAgentId = (node.compensationAgentId() != null && !node.compensationAgentId().isBlank())
+                                ? node.compensationAgentId().trim()
+                                : node.agentId();
+
+                        log.info("[WORKFLOW-SAGA] Executing compensation for node '{}' via agent '{}'", node.nodeId(), compAgentId);
+
+                        try (SwarmSpan compSpan = SwarmTelemetry.startSpan("agent.invoke", rollbackSpan)) {
+                            compSpan.setAttribute(TelemetryAttributes.AGENT_ID, compAgentId);
+                            compSpan.setAttribute(TelemetryAttributes.MEMORY_ID, threadId + ":" + node.nodeId() + ":compensation");
+                            compSpan.setAttribute(TelemetryAttributes.WORKFLOW_ID, graph.workflowId());
+                            compSpan.setAttribute(TelemetryAttributes.WORKFLOW_NODE_ID, node.nodeId());
+
+                            String compensationPrompt = formatCompensationPrompt(node, state.getData());
+                            compSpan.setAttribute(TelemetryAttributes.LLM_CONTEXT_SYSTEM_PROMPT, compensationPrompt);
+
+                            int promptTokens = SwarmTelemetry.estimateTokens(compensationPrompt);
+                            String compMemoryId = threadId + ":" + node.nodeId() + ":compensation";
+                            String compRawResponse = agentInvoker.invoke(compAgentId, compensationPrompt, compMemoryId);
+                            int completionTokens = SwarmTelemetry.estimateTokens(compRawResponse);
+                            compSpan.recordTokenUsage(promptTokens, completionTokens);
+
+                            Map<String, Object> rawUpdate = outputParser.parseOutput(compRawResponse, node.nodeId() + "_compensation");
+                            Map<String, Object> firewalled = filterWriteUpdate(node, rawUpdate);
+                            if (firewalled != null && !firewalled.isEmpty()) {
+                                state.applyUpdate(firewalled);
+                            }
+                            compensatedNodes.add(node.nodeId());
+                            log.info("[WORKFLOW-SAGA] Successfully compensated node '{}'. Applied state keys: {}",
+                                    node.nodeId(), firewalled != null ? firewalled.keySet() : Collections.emptySet());
+                        } catch (Exception e) {
+                            log.error("[WORKFLOW-SAGA] Compensation action failed for node '{}' (agent '{}'): {}",
+                                    node.nodeId(), compAgentId, e.getMessage(), e);
+                        }
                     }
                 }
 
@@ -584,12 +629,19 @@ public class WorkflowEngine {
                         interruptAfterTriggers, threadId);
                 return state;
             }
+                } // end of try superstepSpan
+            } // end of while loop
+
+            log.info("[WORKFLOW] Workflow '{}' (threadId='{}') terminated successfully in {} superstep(s).",
+                    graph.workflowId(), threadId, superstepCount);
+
+            return state;
+        } catch (Throwable t) {
+            runSpan.recordException(t);
+            throw t;
+        } finally {
+            runSpan.close();
         }
-
-        log.info("[WORKFLOW] Workflow '{}' (threadId='{}') terminated successfully in {} superstep(s).",
-                graph.workflowId(), threadId, superstepCount);
-
-        return state;
     }
 
     private Set<String> evaluateNextActiveNodes(List<String> nodeIds) {

@@ -2,6 +2,9 @@ package com.agent.orchestration.services;
 
 import com.agent.factory.SubAgentFactory;
 import com.agent.WorkerAgent;
+import com.agent.telemetry.SwarmSpan;
+import com.agent.telemetry.SwarmTelemetry;
+import com.agent.telemetry.TelemetryAttributes;
 import com.agent.tools.context.services.BlackboardService;
 
 import java.util.Objects;
@@ -93,12 +96,25 @@ public class OrchestrationService implements AutoCloseable {
                                   "YOUR TASK:\n" + task;
                 }
 
-                String response = (memoryId != null)
-                        ? agent.execute(memoryId, finalPrompt)
-                        : agent.execute(finalPrompt);
-                int responseLength = (response != null) ? response.length() : 0;
-                System.out.println("[main] INFO OrchestrationService - Agent '" + agentId + "' completed task. Response length: " + responseLength);
-                return response != null ? response : "";
+                try (SwarmSpan span = SwarmTelemetry.startSpan("agent.invoke")) {
+                    span.setAttribute(TelemetryAttributes.AGENT_ID, normalizedAgentId);
+                    span.setAttribute(TelemetryAttributes.MEMORY_ID, memoryId != null ? memoryId.toString() : "default");
+                    if (coreContext != null && !coreContext.isBlank()) {
+                        span.setAttribute(TelemetryAttributes.LLM_CONTEXT_CORE_MEMORY_INJECTED, coreContext);
+                    }
+                    span.setAttribute(TelemetryAttributes.LLM_CONTEXT_SYSTEM_PROMPT, finalPrompt);
+                    int promptTokens = SwarmTelemetry.estimateTokens(finalPrompt);
+
+                    String response = (memoryId != null)
+                            ? agent.execute(memoryId, finalPrompt)
+                            : agent.execute(finalPrompt);
+                    int completionTokens = SwarmTelemetry.estimateTokens(response);
+                    span.recordTokenUsage(promptTokens, completionTokens);
+
+                    int responseLength = (response != null) ? response.length() : 0;
+                    System.out.println("[main] INFO OrchestrationService - Agent '" + agentId + "' completed task. Response length: " + responseLength);
+                    return response != null ? response : "";
+                }
             } catch (Exception e) {
                 System.err.println("[ORCHESTRATOR] Agent '" + agentId + "' encountered error on attempt " + attempt + ": " + e.getMessage());
                 if (attempt == maxAttempts) {
