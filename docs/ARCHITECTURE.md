@@ -1,51 +1,76 @@
 # Computer Use AI Agent: Enterprise Architecture & System Specification
 
 ## 1. Executive Architectural Overview
-The **Computer Use AI Agent** is a production-grade, local Multi-Agent Swarm engineered in **Java 21** using **LangChain4j**, **Ollama (`llama3.1`, `llama3.2-vision`)**, and **Virtual Threads (Project Loom)**. 
 
-The system implements a decoupled, event-driven, Human-In-The-Loop (HITL) architecture enabling autonomous desktop and operating system actuation without compromising system security or context-window stability.
+The **Computer Use AI Agent** is a production-grade, local Multi-Agent AI system engineered in **Java 21** using **LangChain4j**, **Ollama (`llama3.1`, `llama3.2-vision`)**, **Java 21 Virtual Threads (Project Loom)**, and **OpenTelemetry (OTel)** distributed tracing. 
+
+The architecture unifies dynamic, open-ended sub-agent delegation with deterministic, Bulk Synchronous Parallel (BSP) DAG workflow execution, atomic checkpointing, cooperative Human-in-the-Loop (HITL) suspension, and automated Saga compensating rollbacks.
 
 ```mermaid
 graph TD
-    User([User CLI / Terminal]) <--> AgentMain[AgentMain Orchestrator Entrypoint]
-    AgentMain --> Orchestrator[Swarm Orchestrator (WorkerAgent)]
+    User(["User CLI / Terminal"]) <--> AgentMain["AgentMain Orchestrator Entrypoint"]
+    AgentMain --> Orchestrator["Swarm Orchestrator (Supervisor WorkerAgent)"]
     
-    subgraph Swarm Execution Engine
-        Orchestrator --> DelegationTool[DelegationTool]
-        DelegationTool -->|Virtual Thread Per Task| SubAgents[Specialized Sub-Agents]
-        SubAgents --> Architect[System Architect]
-        SubAgents --> Developer[Lead Developer]
-        SubAgents --> DevOps[DevOps Engineer]
-        SubAgents --> GUITester[GUI Automation Agent]
+    subgraph Hybrid Supervisor Facades
+        Orchestrator --> DelegationFacade["DelegationFacade (Dynamic Tasks)"]
+        Orchestrator --> WorkflowToolsFacade["WorkflowToolsFacade (Deterministic DAGs & Builders)"]
+        Orchestrator --> TelemetryToolsFacade["TelemetryToolsFacade (OTel Metrics & Diagnostics)"]
     end
 
-    subgraph Shared State & Memory
-        ContextTools[(ContextTools Blackboard)]
-        ChromaStore[(Local Vector Store / ChromaDB)]
-        Architect <--> ContextTools
-        Developer <--> ContextTools
-        DevOps <--> ContextTools
-        GUITester <--> ContextTools
+    subgraph Dynamic Swarm Execution Engine
+        DelegationFacade --> OrchestrationService["OrchestrationService (Virtual Threads & Isolation)"]
+        OrchestrationService -->|Virtual Threads| SubAgents["Specialized Sub-Agents (Isolated @MemoryId)"]
+        SubAgents --> Architect["architect: System Architect"]
+        SubAgents --> Developer["developer: Lead Developer"]
+        SubAgents --> DevOps["devops: DevOps Engineer"]
+        SubAgents --> Researcher["researcher: Web Researcher"]
+        SubAgents --> GUITester["gui_tester: Desktop GUI Actuator"]
     end
 
-    subgraph Enterprise Tools & Facades
-        TerminalFacade[TerminalToolsFacade]
-        VisionFacade[VisionToolsFacade]
-        GitToolsFacade[GitTools]
-        WebToolsFacade[WebTools]
+    subgraph Deterministic Workflow Engine
+        WorkflowToolsFacade --> WorkflowRegistryService["WorkflowRegistryService (Catalog & Persistence)"]
+        WorkflowRegistryService --> WorkflowEngine["WorkflowEngine (BSP Superstep Engine)"]
+        WorkflowEngine --> VirtualThreads["Virtual Threads (Concurrent Superstep Phase A)"]
+        WorkflowEngine --> ConditionEvaluator["ConditionEvaluator (LangGraph Dynamic Edges)"]
+        WorkflowEngine <--> WorkflowState["WorkflowState (Channels & Typed Reducers)"]
+        WorkflowEngine --> JsonFileCheckpointer["JsonFileCheckpointer (Atomic .checkpoints)"]
+        WorkflowEngine --> SagaRollback["Saga Compensator (LIFO Compensating Rollback)"]
+        WorkflowEngine -->|Step Dispatch| SubAgents
     end
 
-    subgraph Security & Actuation Boundary
-        Security[SecurityInterceptor (HITL Gate)]
-        RobotActuator[java.awt.Robot Desktop Actuator]
-        OSProcess[CommandExecutorService (OS Shell)]
-        FileService[FileSystemService (Atomic .bak)]
+    subgraph Distributed Observability
+        SwarmTelemetry["SwarmTelemetry (Trace Propagation)"]
+        SwarmTelemetry --> InMemoryTraceExporter["InMemoryTraceExporter (Live Visualizer Buffer)"]
+        SwarmTelemetry --> JsonLinesTraceExporter["JsonLinesTraceExporter (.traces/swarm_traces.jsonl)"]
+        TelemetryToolsFacade --> SwarmTelemetry
+    end
+
+    subgraph Shared State & Event Mesh
+        BlackboardService["BlackboardService (Reactive Pub/Sub & TTL)"]
+        LongTermMemoryService["LongTermMemoryService (ChromaDB / ONNX Embeddings)"]
+        SubAgents <--> BlackboardService
+        SubAgents <--> LongTermMemoryService
+    end
+
+    subgraph Enterprise Tools & Security Boundary
+        TerminalFacade["TerminalToolsFacade"]
+        VisionFacade["VisionToolsFacade"]
+        GitToolsFacade["GitToolsFacade"]
+        WebToolsFacade["WebToolsFacade"]
+        MemoryToolsFacade["MemoryToolsFacade"]
+        ContextToolsFacade["ContextToolsFacade"]
+        Security["SecurityInterceptor (Fair ReentrantLock HITL Gate)"]
+        RobotActuator["java.awt.Robot Desktop Actuator"]
+        OSProcess["CommandExecutorService (Tree ProcessHandle & Gobblers)"]
+        FileService["FileSystemService (Atomic .bak Backups)"]
     end
 
     SubAgents --> TerminalFacade
     SubAgents --> VisionFacade
     SubAgents --> GitToolsFacade
     SubAgents --> WebToolsFacade
+    SubAgents --> MemoryToolsFacade
+    SubAgents --> ContextToolsFacade
 
     TerminalFacade --> Security
     VisionFacade --> Security
@@ -65,73 +90,84 @@ graph TD
   ```java
   public interface WorkerAgent {
       String execute(String task);
+      String execute(Object memoryId, String task);
   }
   ```
-- **Configuration-Driven Manifest (`agents.json`):** Dynamic agent definitions define scoped responsibilities and tool boundaries:
-  - `architect`: System planning, AST structural exploration, package mapping (`web`, `memory`, `terminal`, `context`).
-  - `developer`: Surgical file creation, regex patching, and refactoring (`terminal`, `context`).
+- **Configuration-Driven Manifest ([`src/main/resources/agents.json`](file:///e:/computer-agent/src/main/resources/agents.json)):** Declarative agent definitions define scoped responsibilities and tool boundaries:
+  - `architect`: System planning, AST structural exploration, package mapping (`terminal`, `memory`, `context`).
+  - `developer`: Surgical file creation, regex patching, refactoring, and code generation (`terminal`, `memory`, `context`).
   - `devops`: Build lifecycle, test verification, git auditing, and releases (`terminal`, `git`, `context`).
+  - `researcher`: Web research, documentation lookup, and DOM extraction (`web`, `memory`, `context`).
   - `gui_tester`: Desktop vision inspection, SoM grid localization, mouse/keyboard actuation (`vision`, `context`).
-- **Context Isolation:** Each sub-agent maintains an isolated `MessageWindowChatMemory` sliding window, completely preventing conversational bloat from contaminating the root orchestrator.
+- **Memory Isolation & Bounding:** Each sub-agent maintains isolated `@MemoryId` chat memory windows (`DelegatingChatMemory`). Chat memory keys are scoped per agent profile (`agentId#memoryId`) to eliminate cross-agent context contamination. Memory windows are capped at 1,000 active entries with automated LRU eviction and prefix-based eviction upon workflow completion (`evictMemoryByPrefix`).
 
 ### 2.2 Concurrency & Thread-Safe State Sharing
-- **Virtual Threads Execution (`DelegationTool`):** Independent tasks dispatched via `delegateParallel` execute on lightweight Java 21 Virtual Threads (`Executors.newVirtualThreadPerTaskExecutor()`), synthesizing outputs concurrently with zero thread contention.
-- **The Shared Blackboard (`ContextTools`):** Cross-agent communication occurs over a thread-safe `ConcurrentHashMap<String, String>` blackboard (`writeToBlackboard`, `readFromBlackboard`). Large schemas, keys, or architectural drafts pass between agents by reference without overflowing LLM context windows.
+- **Virtual Threads Execution (`OrchestrationService`):** Independent tasks dispatched via `delegateParallel` execute on lightweight Java 21 Virtual Threads (`Executors.newVirtualThreadPerTaskExecutor()`), synthesizing outputs concurrently with zero thread contention.
+- **Reactive Blackboard Mesh (`BlackboardService`):** Thread-safe state container supporting cross-agent communication (`writeToBlackboard`, `readFromBlackboard`), time-to-live expiration (TTL), reactive event listening via `BlackboardListener`, and non-polling synchronization via `awaitKey(namespace, key, timeout)`.
 
 ---
 
-## 3. Enterprise Tool Facades & Filesystem Hardening
+## 3. Deterministic Declarative Workflow Engine (DAGs)
 
-### 3.1 Terminal & Filesystem Layer (`TerminalToolsFacade`)
-The terminal layer is decoupled into specialized services following Clean Architecture:
-1. **`FileSystemService`:**
-   - **Atomic Backups:** Automatically creates `.bak` snapshot copies via `Files.copy` before performing any destructive write or line-replacement.
-   - **5MB Payload Ceiling:** Strictly rejects payloads exceeding 5,242,880 bytes to guard against memory exhaustion.
-   - **Binary Probing Safeguard:** Reads the initial 1024 bytes of any file for null bytes (`0x00`) to reject compiled binaries (e.g. fat JARs, class files) before ingestion.
-   - **Grep Clone (`searchDirectory`):** Regex-enabled recursive crawler with case-insensitive Pattern matching, extension filtering, AST parser stubs, and a 50-match global context ceiling.
-   - **Path Auto-Resolution:** Automatically searches the repository if an agent specifies an unqualified filename, preventing path misdirection.
-2. **`CommandExecutorService`:**
-   - Wraps commands in host OS shells (`cmd.exe /c` / `powershell` on Windows, `/bin/sh -c` on Unix).
-   - Uses Virtual Thread stream gobblers to drain stdout/stderr and terminates processes exceeding 60-second timeouts.
-3. **Method Overloading Architecture:**
-   - Explicitly provides 1-arg, 2-arg, and 3-arg `@Tool` overloads for `listDirectory` and `searchDirectory` to prevent LangChain4j `DefaultToolExecutor.coerceArgument` NullPointerExceptions when optional arguments are omitted.
+The `WorkflowEngine` implements a Bulk Synchronous Parallel (BSP) graph execution model inspired by Google Pregel and LangGraph.
 
----
+### 3.1 BSP Superstep Lifecycle
+Each workflow superstep executes across three deterministic phases:
+1. **Phase A: Concurrent Execution:** Active DAG nodes are dispatched concurrently onto Java 21 Virtual Threads. Each node receives an immutable, filtered state snapshot according to its declared `readChannels`.
+2. **Phase B: Synchronization Barrier & State Reduction:** The engine blocks at a virtual thread barrier, gathers partial node outputs, validates them against declared `writeChannels`, and merges them atomically into `WorkflowState` using typed channel `Reducer` instances (e.g. `AppendListReducer`, `OverwriteReducer`).
+3. **Phase C: Planning & Edge Evaluation:** Outbound edges from executed nodes are evaluated against the newly reduced state using `ConditionEvaluator`. Dynamic conditional edges branch execution paths deterministically.
 
-## 4. Human-In-The-Loop (HITL) Security Architecture
+### 3.2 Human-In-The-Loop (HITL) Cooperative Suspension
+- **Interrupt Breakpoints:** Nodes declare `interruptBefore` or `interruptAfter` breakpoints.
+- **State Suspension:** When an interrupt is triggered, `WorkflowEngine` halts cleanly without blocking OS threads, records a `SUSPENDED` checkpoint, and preserves sub-agent chat memory.
+- **Resumption (`resumeWorkflow`):** Callers supply the `threadId` and optional state updates. The engine restores the checkpoint, applies human updates, re-evaluates outbound edges, and resumes forward execution.
 
-### 4.1 Security Boundary Enforcement (`SecurityInterceptor`)
-- **Zero-Bypass Gate:** Destructive operations (process execution, file overwrites, line splicing, mouse clicks, key presses, and git commits) must pass through `SecurityInterceptor.requestPermission(action, target)`.
-- **Anti-Looping & Terminal State Machine:**
-  - If a user denies an action (`N`), the interceptor logs the denial and returns an explicit `ACTION REJECTED: User explicitly denied...` payload.
-  - Sub-agent and Orchestrator system prompts treat rejection as an immutable terminal state, preventing infinite 100-step retry loops.
-- **Mockito Security Isolation:** Mathematical proof tests in `TerminalToolsFacadeTest` verify that when permissions are denied, target execution services are strictly never invoked (`verify(service, never()).methodCall()`).
+### 3.3 Saga Pattern Distributed Compensating Rollback
+- **Forward & Rollback Pairs:** Workflow nodes declare optional compensating actions (`compensationAgentId` and `compensationInstruction`).
+- **LIFO Compensation Stack:** As forward nodes complete successfully, their compensation records are pushed onto an execution stack.
+- **Automated Rollback:** If a downstream node fails (or an unhandled exception occurs), the engine halts forward progress, enters rollback mode, and executes compensating actions in reverse chronological order (LIFO), saving a `ROLLED_BACK` checkpoint and evicting thread memory.
+
+### 3.4 Scoped State Contracts
+- **`readChannels`:** Filters the state snapshot presented in the node prompt, preventing context window saturation.
+- **`writeChannels`:** Restricts which channels a node's output can mutate, enforcing strict least-privilege boundaries.
 
 ---
 
-## 5. Set-of-Marks (SoM) Vision & GUI Actuation
+## 4. OpenTelemetry Distributed Tracing & Observability
 
-### 5.1 Visual Localization (`VisionToolsFacade`)
-- **10x10 Set-of-Marks (SoM) Grid Overlay:**
-  - Captures high-resolution screen buffers via `java.awt.Robot.createScreenCapture`.
-  - Overlays a dynamic 100-cell grid with contrasting borders and center-aligned numeric markers (`0` to `99`).
-  - Emits compressed JPEG payloads to `llama3.2-vision` for semantic coordinate reasoning.
-
-### 5.2 Precision Desktop Actuation
-- **Precision Sub-Grid Offset Targeting (`clickGridOffset`):**
-  - Accepts normalized offset percentages (`offsetPercentX`, `offsetPercentY`) clamped to `[0.0, 1.0]`.
-  - Calculates sub-pixel offsets within a specific grid cell, allowing sub-pixel UI precision without raw coordinate hallucinations.
-- **Full Mouse & Keyboard Suite:**
-  - `doubleClickGridId`: Dispatches rapid dual left-clicks.
-  - `rightClickGridId`: Dispatches context-menu clicks (`BUTTON3_DOWN_MASK`).
-  - `scrollMouse`: Actuates mouse wheel notches (positive down, negative up).
-  - `pressHotkey`: Sequentially presses composite keys (`ctrl`, `alt`, `shift`, `esc`) and guarantees reverse-order release inside a `try/finally` block to prevent sticky key locks.
-  - `typeText`: Writes text via the system clipboard with an automated 5-attempt retry loop and backoff to bypass Windows clipboard handle locks.
+Enterprise-grade distributed tracing is integrated throughout the engine via `SwarmTelemetry`:
+- **W3C Distributed Trace Context:** Spans propagate trace and parent span identifiers across Virtual Thread supersteps and sub-agent invocations.
+- **Automated Tool Instrumentation:** All `@Tool` methods across all 6 core facades (`TerminalToolsFacade`, `GitToolsFacade`, `WebToolsFacade`, `MemoryToolsFacade`, `ContextToolsFacade`, `VisionToolsFacade`) execute inside automatic `tool.execute` child spans recording tool name, arguments JSON, execution duration, and error status.
+- **Condition Evaluator Telemetry:** Evaluated DAG edges emit `condition.evaluated` span events flagging any referenced state keys absent from `WorkflowState`.
+- **Dual Exporters:**
+  - `InMemoryTraceExporter`: Circular buffer (1,000 spans) powering runtime diagnostics and live dashboard queries.
+  - `JsonLinesTraceExporter`: Append-only persistence writing JSON lines to `.traces/swarm_traces.jsonl`.
+- **Supervisor Facade (`TelemetryToolsFacade`):** Exposes `getTelemetrySummary()` (spans, prompt/completion tokens, average latencies) and `getRecentTraces(limit)`.
 
 ---
 
-## 6. Distribution & Operational Metrics
+## 5. Enterprise Tools, Sandboxing & Security
 
-- **Standalone CLI Packaging (`swarm.bat`):** Packaged via `maven-shade-plugin` with `ServicesResourceTransformer` and `ManifestResourceTransformer` into an executable Fat JAR (`target/computer-agent-1.0.0-SNAPSHOT.jar`).
-- **Graceful Lifecycle Shutdown:** JVM shutdown hooks safely terminate background Virtual Thread executors and release vector store connections upon `SIGINT` / `Ctrl+C`.
-- **Test Suite Health:** 92 automated tests across unit, security isolation, concurrency, and facade integration executing in <40 seconds with zero regressions.
+### 5.1 Process Resilience & Sandboxing (`CommandExecutorService`)
+- **Recursive Process Tree Destruction:** Leverages Java 9+ `ProcessHandle.descendants()` to recursively terminate child and grandchild processes upon timeout or cancellation, preventing orphan process hangs on Windows (`cmd.exe`) and Linux (`sh`).
+- **Asynchronous Stream Gobblers:** Drains stdout and stderr concurrently on dedicated Virtual Threads using UTF-8 `ByteArrayOutputStream` buffers capped at 512KB to protect JVM heap memory.
+- **Working Directory Sandboxing:** Enforces directory restrictions to prevent path traversal outside designated project roots.
+
+### 5.2 Atomic Filesystem Operations (`FileSystemService`)
+- **Automatic `.bak` Snapshots:** Creates `.bak` recovery copies before mutating or replacing file content.
+- **Payload & Binary Protections:** Enforces a 5MB payload limit and inspects the initial 1024 bytes for null bytes (`0x00`) to prevent accidental binary file corruption.
+
+### 5.3 Fair Human-In-The-Loop Gate (`SecurityInterceptor`)
+- **Fair Concurrency Serialization:** Utilizes a static fair `ReentrantLock(true)` to ensure that concurrent Virtual Threads prompting for interactive console approval (`System.in`/`System.out`) are queued and served in exact FIFO arrival order without interleaving or deadlock.
+
+### 5.4 Desktop Vision & Actuation (`VisionToolsFacade`)
+- **10x10 Set-of-Marks (SoM) Grid Overlay:** Overlays a 100-cell grid with contrasting borders and numeric markers (`0` to `99`) over screen captures, providing semantic coordinate grounding for vision models.
+- **Precision Desktop Actuation:** Supports normalized relative offsets (`clickGridOffset`), double clicks, right clicks, wheel scrolling, clipboard text pasting with retry backoff, and safe sequential hotkey pressing with guaranteed reverse-order release.
+
+---
+
+## 6. Distribution, Testing & Operational Health
+
+- **Executable Fat JAR:** Shaded via `maven-shade-plugin` with `ServicesResourceTransformer` and `ManifestResourceTransformer` into `target/computer-agent-1.0.0-SNAPSHOT.jar`.
+- **Built-In Workflow Catalog:** Packaged into classpath resources under `workflows/`: `research_pipeline.json`, `code_review_pipeline.json`, and `saga_release_pipeline.json`.
+- **Automated Test Coverage:** Comprehensive test suite of **232 automated tests passing with 0 failures and 0 errors**, validating unit, security isolation, concurrency, BSP supersteps, Saga rollbacks, reactive pub/sub, and distributed telemetry.

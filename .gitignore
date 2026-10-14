@@ -7,3 +7,6 @@ chroma_data/
 *.log
 env/
 test_*.txt
+graphify-out/cache/
+.traces/
+.checkpoints/
