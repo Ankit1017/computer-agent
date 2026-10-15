@@ -175,7 +175,7 @@ public class SwarmTelemetry {
                         T combined = (T) (str + decision.warningMessage());
                         result = combined;
                     }
-                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied") || str.startsWith("[GUARDRAIL BLOCKED:"))) {
                         span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
                     } else {
                         span.setStatus(SpanStatus.OK, "Completed");
@@ -188,7 +188,7 @@ public class SwarmTelemetry {
             } else {
                 try {
                     T result = action.call();
-                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied") || str.startsWith("[GUARDRAIL BLOCKED:"))) {
                         span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
                     } else {
                         span.setStatus(SpanStatus.OK, "Completed");
@@ -244,7 +244,7 @@ public class SwarmTelemetry {
                         result = combined;
                     }
 
-                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied") || str.startsWith("[GUARDRAIL BLOCKED:"))) {
                         span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
                     } else {
                         span.setStatus(SpanStatus.OK, "Completed");
@@ -259,7 +259,7 @@ public class SwarmTelemetry {
             } else {
                 try {
                     T result = action.get();
-                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied") || str.startsWith("[GUARDRAIL BLOCKED:"))) {
                         span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
                     } else {
                         span.setStatus(SpanStatus.OK, "Completed");
@@ -365,6 +365,7 @@ public class SwarmTelemetry {
         IN_MEMORY_EXPORTER.clear();
         GUARDRAILS_ALWAYS_ENABLED.remove();
         com.agent.guardrails.ToolLoopGuard.reset();
+        com.agent.guardrails.FileContextGate.reset();
     }
 
     private static String generateHex(int byteLength) {

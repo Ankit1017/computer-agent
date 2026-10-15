@@ -20,6 +20,14 @@ import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.agent.guardrails.FileContextGate;
+import com.agent.guardrails.GuardrailDecision;
+import com.agent.guardrails.UnifiedDiffGenerator;
+import com.agent.telemetry.SpanStatus;
+import com.agent.telemetry.SwarmSpan;
+import com.agent.telemetry.SwarmTelemetry;
+import com.agent.telemetry.TelemetryAttributes;
+
 /**
  * Service encapsulating Java NIO filesystem operations: reading, writing, searching, and directory mapping.
  */
@@ -29,6 +37,34 @@ public class FileSystemService {
     private static final int MAX_FILE_READ_CHARACTERS = 3000;
     private static final int MAX_SEARCH_DEPTH = 3;
     private static final int MAX_SEARCH_MATCHES = 20;
+
+    private volatile boolean enforceReadBeforeWrite = false;
+
+    public void setEnforceReadBeforeWrite(boolean enforce) {
+        this.enforceReadBeforeWrite = enforce;
+    }
+
+    public boolean isEnforceReadBeforeWrite() {
+        return this.enforceReadBeforeWrite;
+    }
+
+    private boolean shouldEnforceGate() {
+        return enforceReadBeforeWrite || SwarmTelemetry.isAgentTurnActive();
+    }
+
+    private void recordGateBlockInTelemetry(Path path, GuardrailDecision decision) {
+        SwarmSpan span = SwarmTelemetry.currentSpan();
+        if (span != null) {
+            span.setAttribute(TelemetryAttributes.GUARDRAIL_BLOCKED, true);
+            span.setAttribute(TelemetryAttributes.GUARDRAIL_REASON, decision.reason());
+            span.addEvent("guardrail.file_gate_blocked", java.util.Map.of(
+                    "file.path", path.toString(),
+                    "guardrail.reason", decision.reason() != null ? decision.reason() : "",
+                    "guardrail.message", decision.blockMessage() != null ? decision.blockMessage() : ""
+            ));
+            span.setStatus(SpanStatus.ERROR, decision.blockMessage());
+        }
+    }
 
     private static final Set<String> BINARY_EXTENSIONS = Set.of(
             ".jar", ".class", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
@@ -113,6 +149,7 @@ public class FileSystemService {
             }
 
             String content = Files.readString(targetPath, StandardCharsets.UTF_8);
+            FileContextGate.recordRead(targetPath);
             if (content.length() > MAX_FILE_READ_CHARACTERS) {
                 return content.substring(0, MAX_FILE_READ_CHARACTERS) + "\n...[truncated]";
             }
@@ -175,6 +212,8 @@ public class FileSystemService {
             for (int i = 0; i < extracted.size(); i++) {
                 sb.append(finalStart + i).append(": ").append(extracted.get(i)).append("\n");
             }
+
+            FileContextGate.recordRead(path);
         } catch (java.nio.charset.MalformedInputException e) {
             return "Error: File is not valid UTF-8. It may be binary or use a non-standard encoding.";
         } catch (IOException e) {
@@ -333,15 +372,26 @@ public class FileSystemService {
 
         Path path = Paths.get(filePath);
 
-        // 1. Payload Size Guardrail (5MB limit)
+        // 1. Guardrail Check (Read-Before-Write & Stale Check)
+        if (shouldEnforceGate()) {
+            GuardrailDecision decision = FileContextGate.validateWrite(path);
+            if (decision.isBlocked()) {
+                recordGateBlockInTelemetry(path, decision);
+                return decision.blockMessage();
+            }
+        }
+
+        // 2. Payload Size Guardrail (5MB limit)
         byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
         if (contentBytes.length > 5 * 1024 * 1024) {
             return "Error: Payload exceeds maximum write limit of 5MB.";
         }
 
+        String oldContent = "";
         try {
-            // 2. Automatic Backup Generation
+            // 3. Automatic Backup Generation
             if (Files.exists(path)) {
+                oldContent = Files.readString(path, StandardCharsets.UTF_8);
                 Path backupPath = Paths.get(filePath + ".bak");
                 Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
                 System.out.println("[FILESYSTEM] Created backup: " + backupPath.toString());
@@ -352,17 +402,24 @@ public class FileSystemService {
                 }
             }
 
-            // 3. Atomic/UTF-8 Write
+            // 4. Atomic/UTF-8 Write
             Files.write(path, contentBytes, 
                 StandardOpenOption.CREATE, 
                 StandardOpenOption.TRUNCATE_EXISTING);
+
+            // 5. Update snapshot after successful write
+            FileContextGate.recordWrite(path);
                 
         } catch (IOException e) {
             return "Error writing file: " + e.getMessage();
         }
 
+        String fileName = path.getFileName() != null ? path.getFileName().toString() : filePath;
+        String diff = UnifiedDiffGenerator.generateDiff(fileName, oldContent, content);
+
         return "Successfully wrote " + contentBytes.length + " bytes to " + filePath + 
-               (Files.exists(Paths.get(filePath + ".bak")) ? " (Original backed up to .bak)" : "");
+               (Files.exists(Paths.get(filePath + ".bak")) ? " (Original backed up to .bak)" : "") +
+               "\n\n" + diff;
     }
 
     /**
@@ -382,7 +439,18 @@ public class FileSystemService {
         if (!Files.exists(path)) return "Error: File does not exist.";
         if (Files.isDirectory(path)) return "Error: Path is a directory, not a file.";
 
+        // 1. Guardrail Check (Read-Before-Write & Stale Check)
+        if (shouldEnforceGate()) {
+            GuardrailDecision decision = FileContextGate.validateWrite(path);
+            if (decision.isBlocked()) {
+                recordGateBlockInTelemetry(path, decision);
+                return decision.blockMessage();
+            }
+        }
+
         try {
+            String oldContent = Files.readString(path, StandardCharsets.UTF_8);
+
             // Automatic Backup
             Path backupPath = Paths.get(filePath + ".bak");
             Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
@@ -406,7 +474,16 @@ public class FileSystemService {
             }
 
             Files.write(path, lines, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
-            return "Successfully replaced lines " + startLine + " to " + endLine + ". Original backed up to .bak";
+
+            // Update snapshot after successful write
+            FileContextGate.recordWrite(path);
+
+            String newContent = Files.readString(path, StandardCharsets.UTF_8);
+            String fileName = path.getFileName() != null ? path.getFileName().toString() : filePath;
+            String diff = UnifiedDiffGenerator.generateDiff(fileName, oldContent, newContent);
+
+            return "Successfully replaced lines " + startLine + " to " + endLine + ". Original backed up to .bak" +
+                   "\n\n" + diff;
 
         } catch (Exception e) {
             return "Error replacing lines: " + e.getMessage();
@@ -433,11 +510,16 @@ public class FileSystemService {
         if (!Files.exists(path)) return "Error: File does not exist.";
         if (Files.isDirectory(path)) return "Error: Path is a directory, not a file.";
 
-        try {
-            // Automatic Backup
-            Path backupPath = Paths.get(filePath + ".bak");
-            Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
+        // 1. Guardrail Check (Read-Before-Write & Stale Check)
+        if (shouldEnforceGate()) {
+            GuardrailDecision decision = FileContextGate.validateWrite(path);
+            if (decision.isBlocked()) {
+                recordGateBlockInTelemetry(path, decision);
+                return decision.blockMessage();
+            }
+        }
 
+        try {
             String fileContent = Files.readString(path, StandardCharsets.UTF_8);
 
             Pattern pattern;
@@ -453,10 +535,22 @@ public class FileSystemService {
                 return "Error: Regex pattern did not match any content in the file. Patch aborted.";
             }
 
+            // Automatic Backup
+            Path backupPath = Paths.get(filePath + ".bak");
+            Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
+
             String updatedContent = matcher.replaceAll(Matcher.quoteReplacement(replacement != null ? replacement : ""));
 
             Files.writeString(path, updatedContent, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
-            return "Successfully applied regex replacement. Original backed up to .bak";
+
+            // Update snapshot after successful write
+            FileContextGate.recordWrite(path);
+
+            String fileName = path.getFileName() != null ? path.getFileName().toString() : filePath;
+            String diff = UnifiedDiffGenerator.generateDiff(fileName, fileContent, updatedContent);
+
+            return "Successfully applied regex replacement. Original backed up to .bak" +
+                   "\n\n" + diff;
 
         } catch (Exception e) {
             return "Error applying regex patch: " + e.getMessage();

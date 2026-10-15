@@ -27,6 +27,14 @@ public class TerminalToolsFacade {
         this.fileService = Objects.requireNonNull(fileService, "fileService must not be null");
     }
 
+    public void setEnforceReadBeforeWrite(boolean enforce) {
+        this.fileService.setEnforceReadBeforeWrite(enforce);
+    }
+
+    public FileSystemService getFileSystemService() {
+        return this.fileService;
+    }
+
     @Tool("Execute a raw terminal command on the host OS. Returns the standard output or error.")
     public String executeCommand(@P("command to execute") String command) {
         return com.agent.telemetry.SwarmTelemetry.executeTool("executeCommand",
