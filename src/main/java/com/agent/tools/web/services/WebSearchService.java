@@ -50,7 +50,7 @@ public class WebSearchService {
             Element urlElement = result.selectFirst(".result__url");
 
             if (titleElement != null && (urlElement != null || titleElement.hasAttr("href"))) {
-                String title = titleElement.text();
+                String title = com.agent.guardrails.UntrustedContentSanitizer.sanitizeText(titleElement.text());
                 String url = urlElement != null ? urlElement.attr("href") : titleElement.attr("href");
 
                 // DuckDuckGo sometimes prepends redirect URLs. Clean it up if necessary.
@@ -69,7 +69,7 @@ public class WebSearchService {
                     url = "https:" + url;
                 }
 
-                String snippet = snippetElement != null ? snippetElement.text() : "No snippet available.";
+                String snippet = snippetElement != null ? com.agent.guardrails.UntrustedContentSanitizer.sanitizeText(snippetElement.text()) : "No snippet available.";
 
                 sb.append("### ").append(count + 1).append(". ").append(title).append("\n");
                 sb.append("- **URL:** `").append(url).append("`\n");

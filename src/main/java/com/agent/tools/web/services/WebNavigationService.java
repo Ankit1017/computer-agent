@@ -37,6 +37,11 @@ public class WebNavigationService implements AutoCloseable {
             throw new IllegalArgumentException("URL cannot be null or blank.");
         }
 
+        com.agent.guardrails.GuardrailDecision decision = com.agent.guardrails.WebUrlPolicyGuard.validateUrl(urlString);
+        if (decision.isBlocked()) {
+            throw new SecurityException(decision.blockMessage());
+        }
+
         String targetUrl = urlString.trim();
         if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
             targetUrl = "https://" + targetUrl;

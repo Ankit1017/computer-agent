@@ -366,6 +366,7 @@ public class SwarmTelemetry {
         GUARDRAILS_ALWAYS_ENABLED.remove();
         com.agent.guardrails.ToolLoopGuard.reset();
         com.agent.guardrails.FileContextGate.reset();
+        com.agent.guardrails.WebUrlPolicyGuard.resetDnsResolver();
     }
 
     private static String generateHex(int byteLength) {

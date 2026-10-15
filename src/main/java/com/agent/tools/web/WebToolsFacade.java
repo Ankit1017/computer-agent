@@ -1,5 +1,11 @@
 package com.agent.tools.web;
 
+import com.agent.guardrails.GuardrailDecision;
+import com.agent.guardrails.WebUrlPolicyGuard;
+import com.agent.telemetry.SpanStatus;
+import com.agent.telemetry.SwarmSpan;
+import com.agent.telemetry.SwarmTelemetry;
+import com.agent.telemetry.TelemetryAttributes;
 import com.agent.tools.terminal.security.SecurityInterceptor;
 import com.agent.tools.web.services.WebAnalysisService;
 import com.agent.tools.web.services.WebDistillationService;
@@ -7,6 +13,8 @@ import com.agent.tools.web.services.WebNavigationService;
 import com.agent.tools.web.services.WebSearchService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
+
+import java.util.Map;
 
 public class WebToolsFacade {
     private final SecurityInterceptor security;
@@ -38,6 +46,21 @@ public class WebToolsFacade {
                 () -> {
                     if (url == null || url.isBlank()) {
                         return "Error: URL cannot be blank.";
+                    }
+                    GuardrailDecision decision = WebUrlPolicyGuard.validateUrl(url);
+                    if (decision.isBlocked()) {
+                        SwarmSpan span = SwarmTelemetry.currentSpan();
+                        if (span != null) {
+                            span.setAttribute(TelemetryAttributes.GUARDRAIL_BLOCKED, true);
+                            span.setAttribute(TelemetryAttributes.GUARDRAIL_REASON, decision.reason());
+                            span.addEvent("guardrail.ssrf_blocked", Map.of(
+                                    "url", url,
+                                    "guardrail.reason", decision.reason() != null ? decision.reason() : "",
+                                    "guardrail.message", decision.blockMessage() != null ? decision.blockMessage() : ""
+                            ));
+                            span.setStatus(SpanStatus.ERROR, decision.blockMessage());
+                        }
+                        return decision.blockMessage();
                     }
                     System.out.println("[WEB] Agent reading URL: " + url);
                     try {
@@ -128,6 +151,21 @@ public class WebToolsFacade {
                     }
                     if (query == null || query.isBlank()) {
                         return "Error: Query cannot be blank.";
+                    }
+                    GuardrailDecision decision = WebUrlPolicyGuard.validateUrl(url);
+                    if (decision.isBlocked()) {
+                        SwarmSpan span = SwarmTelemetry.currentSpan();
+                        if (span != null) {
+                            span.setAttribute(TelemetryAttributes.GUARDRAIL_BLOCKED, true);
+                            span.setAttribute(TelemetryAttributes.GUARDRAIL_REASON, decision.reason());
+                            span.addEvent("guardrail.ssrf_blocked", Map.of(
+                                    "url", url,
+                                    "guardrail.reason", decision.reason() != null ? decision.reason() : "",
+                                    "guardrail.message", decision.blockMessage() != null ? decision.blockMessage() : ""
+                            ));
+                            span.setStatus(SpanStatus.ERROR, decision.blockMessage());
+                        }
+                        return decision.blockMessage();
                     }
                     System.out.println("[WEB] Agent analyzing URL: " + url + " for query: " + query);
                     try {

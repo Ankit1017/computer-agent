@@ -43,6 +43,20 @@ public class WebDistillationService {
             finalMarkdown = finalMarkdown.substring(0, MAX_MARKDOWN_LENGTH) + "\n\n... [CONTENT TRUNCATED TO PRESERVE CONTEXT WINDOW] ...";
         }
 
+        // 5. Sanitize Untrusted Content & Neutralize Prompt Injections
+        com.agent.guardrails.SanitizationResult sanitization = com.agent.guardrails.UntrustedContentSanitizer.sanitize(finalMarkdown);
+        if (sanitization.modified()) {
+            com.agent.telemetry.SwarmSpan span = com.agent.telemetry.SwarmTelemetry.currentSpan();
+            if (span != null) {
+                span.setAttribute(com.agent.telemetry.TelemetryAttributes.GUARDRAIL_WARNING, "Untrusted content sanitized: " + sanitization.sanitizedDetections());
+                span.addEvent("guardrail.prompt_injection_sanitized", java.util.Map.of(
+                        "sanitized_count", sanitization.sanitizedDetections().size(),
+                        "detections", String.join(", ", sanitization.sanitizedDetections())
+                ));
+            }
+            finalMarkdown = sanitization.content();
+        }
+
         return finalMarkdown;
     }
 
