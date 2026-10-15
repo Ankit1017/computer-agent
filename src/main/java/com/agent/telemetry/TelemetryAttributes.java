@@ -35,4 +35,9 @@ public final class TelemetryAttributes {
     // Errors & Exceptions
     public static final String ERROR_MESSAGE = "error.message";
     public static final String ERROR_TYPE = "error.type";
+
+    // Guardrails & Loop Protection
+    public static final String GUARDRAIL_WARNING = "guardrail.warning";
+    public static final String GUARDRAIL_BLOCKED = "guardrail.blocked";
+    public static final String GUARDRAIL_REASON = "guardrail.reason";
 }

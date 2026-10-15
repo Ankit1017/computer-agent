@@ -57,10 +57,43 @@ public class SwarmTelemetry {
         }
     }
 
+    private static final ThreadLocal<Boolean> GUARDRAILS_ALWAYS_ENABLED = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    /**
+     * Controls whether loop guardrails should be enforced even outside an active "agent.invoke" span.
+     * ThreadLocal scoped to prevent test contamination across threads.
+     */
+    public static void setGuardrailsAlwaysEnabled(boolean enabled) {
+        GUARDRAILS_ALWAYS_ENABLED.set(enabled);
+    }
+
+    /**
+     * Checks if the calling thread is currently within an active agent turn ("agent.invoke" span).
+     */
+    public static boolean isAgentTurnActive() {
+        if (Boolean.TRUE.equals(GUARDRAILS_ALWAYS_ENABLED.get())) {
+            return true;
+        }
+        Deque<SwarmSpan> stack = SPAN_STACK.get();
+        if (stack == null || stack.isEmpty()) {
+            return false;
+        }
+        for (SwarmSpan span : stack) {
+            if ("agent.invoke".equals(span.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Starts a span with explicit traceId and parentSpanId.
      */
     public static SwarmSpan startSpan(String name, String traceId, String parentSpanId) {
+        if ("agent.invoke".equals(name)) {
+            com.agent.guardrails.ToolLoopGuard.resetTurn();
+        }
+
         String resolvedTraceId = (traceId != null && !traceId.isBlank()) ? traceId : generateHex(16);
         String spanId = generateHex(8);
         long startTime = System.currentTimeMillis();
@@ -74,6 +107,9 @@ public class SwarmTelemetry {
                 completedSpan -> {
                     Deque<SwarmSpan> stack = SPAN_STACK.get();
                     stack.remove(completedSpan);
+                    if ("agent.invoke".equals(completedSpan.getName())) {
+                        com.agent.guardrails.ToolLoopGuard.resetTurn();
+                    }
                     if (stack.isEmpty()) {
                         SPAN_STACK.remove();
                     }
@@ -107,17 +143,61 @@ public class SwarmTelemetry {
             if (argumentsJson != null) {
                 span.setAttribute(TelemetryAttributes.TOOL_ARGUMENTS_JSON, argumentsJson);
             }
-            try {
-                T result = action.call();
-                if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
-                    span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
-                } else {
-                    span.setStatus(SpanStatus.OK, "Completed");
+
+            if (isAgentTurnActive()) {
+                com.agent.guardrails.GuardrailDecision decision = com.agent.guardrails.ToolLoopGuard.evaluateAndRecord(toolName, argumentsJson);
+                if (decision.isBlocked()) {
+                    span.setAttribute(TelemetryAttributes.GUARDRAIL_BLOCKED, true);
+                    span.setAttribute(TelemetryAttributes.GUARDRAIL_REASON, decision.reason());
+                    span.addEvent("guardrail.loop_circuit_breaker", Map.of(
+                            "tool.name", toolName != null ? toolName : "",
+                            "guardrail.reason", decision.reason() != null ? decision.reason() : "",
+                            "guardrail.message", decision.blockMessage() != null ? decision.blockMessage() : ""
+                    ));
+                    span.setStatus(SpanStatus.ERROR, decision.blockMessage());
+                    @SuppressWarnings("unchecked")
+                    T blockedResponse = (T) decision.blockMessage();
+                    return blockedResponse;
                 }
-                return result;
-            } catch (Exception e) {
-                span.recordException(e);
-                throw e;
+
+                if (decision.isWarning()) {
+                    span.setAttribute(TelemetryAttributes.GUARDRAIL_WARNING, decision.warningMessage());
+                    span.addEvent("guardrail.loop_warning", Map.of(
+                            "tool.name", toolName != null ? toolName : "",
+                            "guardrail.warning", decision.warningMessage() != null ? decision.warningMessage() : ""
+                    ));
+                }
+
+                try {
+                    T result = action.call();
+                    if (decision.isWarning() && result instanceof String str) {
+                        @SuppressWarnings("unchecked")
+                        T combined = (T) (str + decision.warningMessage());
+                        result = combined;
+                    }
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                        span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
+                    } else {
+                        span.setStatus(SpanStatus.OK, "Completed");
+                    }
+                    return result;
+                } catch (Exception e) {
+                    span.recordException(e);
+                    throw e;
+                }
+            } else {
+                try {
+                    T result = action.call();
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                        span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
+                    } else {
+                        span.setStatus(SpanStatus.OK, "Completed");
+                    }
+                    return result;
+                } catch (Exception e) {
+                    span.recordException(e);
+                    throw e;
+                }
             }
         }
     }
@@ -131,19 +211,66 @@ public class SwarmTelemetry {
             if (argumentsJson != null && !argumentsJson.isBlank()) {
                 span.setAttribute(TelemetryAttributes.TOOL_ARGUMENTS_JSON, argumentsJson);
             }
-            try {
-                T result = action.get();
-                if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
-                    span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
-                } else {
-                    span.setStatus(SpanStatus.OK, "Completed");
+
+            if (isAgentTurnActive()) {
+                com.agent.guardrails.GuardrailDecision decision = com.agent.guardrails.ToolLoopGuard.evaluateAndRecord(toolName, argumentsJson);
+                if (decision.isBlocked()) {
+                    span.setAttribute(TelemetryAttributes.GUARDRAIL_BLOCKED, true);
+                    span.setAttribute(TelemetryAttributes.GUARDRAIL_REASON, decision.reason());
+                    span.addEvent("guardrail.loop_circuit_breaker", Map.of(
+                            "tool.name", toolName != null ? toolName : "",
+                            "guardrail.reason", decision.reason() != null ? decision.reason() : "",
+                            "guardrail.message", decision.blockMessage() != null ? decision.blockMessage() : ""
+                    ));
+                    span.setStatus(SpanStatus.ERROR, decision.blockMessage());
+                    @SuppressWarnings("unchecked")
+                    T blockedResponse = (T) decision.blockMessage();
+                    return blockedResponse;
                 }
-                return result;
-            } catch (Throwable t) {
-                span.recordException(t);
-                if (t instanceof RuntimeException re) throw re;
-                if (t instanceof Error err) throw err;
-                throw new RuntimeException(t);
+
+                if (decision.isWarning()) {
+                    span.setAttribute(TelemetryAttributes.GUARDRAIL_WARNING, decision.warningMessage());
+                    span.addEvent("guardrail.loop_warning", Map.of(
+                            "tool.name", toolName != null ? toolName : "",
+                            "guardrail.warning", decision.warningMessage() != null ? decision.warningMessage() : ""
+                    ));
+                }
+
+                try {
+                    T result = action.get();
+                    if (decision.isWarning() && result instanceof String str) {
+                        @SuppressWarnings("unchecked")
+                        T combined = (T) (str + decision.warningMessage());
+                        result = combined;
+                    }
+
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                        span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
+                    } else {
+                        span.setStatus(SpanStatus.OK, "Completed");
+                    }
+                    return result;
+                } catch (Throwable t) {
+                    span.recordException(t);
+                    if (t instanceof RuntimeException re) throw re;
+                    if (t instanceof Error err) throw err;
+                    throw new RuntimeException(t);
+                }
+            } else {
+                try {
+                    T result = action.get();
+                    if (result instanceof String str && (str.startsWith("Error:") || str.startsWith("ERROR") || str.startsWith("ACTION REJECTED") || str.startsWith("User denied"))) {
+                        span.setStatus(SpanStatus.ERROR, str.length() > 200 ? str.substring(0, 200) + "..." : str);
+                    } else {
+                        span.setStatus(SpanStatus.OK, "Completed");
+                    }
+                    return result;
+                } catch (Throwable t) {
+                    span.recordException(t);
+                    if (t instanceof RuntimeException re) throw re;
+                    if (t instanceof Error err) throw err;
+                    throw new RuntimeException(t);
+                }
             }
         }
     }
@@ -236,6 +363,8 @@ public class SwarmTelemetry {
     public static void reset() {
         SPAN_STACK.remove();
         IN_MEMORY_EXPORTER.clear();
+        GUARDRAILS_ALWAYS_ENABLED.remove();
+        com.agent.guardrails.ToolLoopGuard.reset();
     }
 
     private static String generateHex(int byteLength) {
