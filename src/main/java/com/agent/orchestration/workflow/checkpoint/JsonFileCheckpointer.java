@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -56,7 +57,27 @@ public class JsonFileCheckpointer implements WorkflowCheckpointer {
             Path targetFile = threadDir.resolve(fileName);
             Path tempFile = Files.createTempFile(threadDir, "cp_tmp_", ".tmp");
 
-            objectMapper.writerWithDefaultPrettyPrinter().writeValue(tempFile.toFile(), checkpoint);
+            Map<String, Object> stateData = checkpoint.stateData();
+            WorkflowCheckpoint checkpointToSave = checkpoint;
+            if (stateData != null && !stateData.isEmpty()) {
+                Map<String, Object> redactedState = com.agent.guardrails.SecretRedactor.redactMap(stateData);
+                if (!redactedState.equals(stateData)) {
+                    checkpointToSave = new WorkflowCheckpoint(
+                            checkpoint.threadId(),
+                            checkpoint.workflowId(),
+                            checkpoint.superstep(),
+                            checkpoint.activeNodes(),
+                            redactedState,
+                            checkpoint.timestamp(),
+                            checkpoint.status(),
+                            checkpoint.interruptedNodes(),
+                            checkpoint.interruptType(),
+                            checkpoint.completedNodes()
+                    );
+                }
+            }
+
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(tempFile.toFile(), checkpointToSave);
 
             try {
                 Files.move(tempFile, targetFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);

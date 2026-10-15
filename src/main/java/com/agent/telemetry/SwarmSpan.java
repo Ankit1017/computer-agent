@@ -90,7 +90,18 @@ public class SwarmSpan implements AutoCloseable {
 
     public SwarmSpan setAttribute(String key, Object value) {
         if (key != null && value != null) {
-            attributes.put(key, value);
+            if (value instanceof String str) {
+                com.agent.guardrails.RedactionResult red = com.agent.guardrails.SecretRedactor.redactDetailed(str);
+                attributes.put(key, red.redactedText());
+                if (red.modified()) {
+                    attributes.put(TelemetryAttributes.GUARDRAIL_REDACTED, true);
+                    Object existingCount = attributes.get(TelemetryAttributes.GUARDRAIL_REDACTION_COUNT);
+                    int currentCount = (existingCount instanceof Number num) ? num.intValue() : 0;
+                    attributes.put(TelemetryAttributes.GUARDRAIL_REDACTION_COUNT, currentCount + red.redactionCount());
+                }
+            } else {
+                attributes.put(key, value);
+            }
         }
         return this;
     }
@@ -111,19 +122,21 @@ public class SwarmSpan implements AutoCloseable {
 
     public SwarmSpan setStatus(SpanStatus status, String message) {
         this.status = status;
-        this.statusMessage = message;
+        this.statusMessage = message != null ? com.agent.guardrails.SecretRedactor.redact(message) : null;
         return this;
     }
 
     public SwarmSpan recordException(Throwable throwable) {
         if (throwable != null) {
             this.status = SpanStatus.ERROR;
-            this.statusMessage = throwable.getMessage();
-            setAttribute(TelemetryAttributes.ERROR_MESSAGE, throwable.getMessage());
+            String rawMsg = throwable.getMessage();
+            String safeMsg = rawMsg != null ? com.agent.guardrails.SecretRedactor.redact(rawMsg) : null;
+            this.statusMessage = safeMsg;
+            setAttribute(TelemetryAttributes.ERROR_MESSAGE, safeMsg);
             setAttribute(TelemetryAttributes.ERROR_TYPE, throwable.getClass().getName());
             addEvent("exception", Map.of(
                     "exception.type", throwable.getClass().getName(),
-                    "exception.message", throwable.getMessage() != null ? throwable.getMessage() : ""
+                    "exception.message", safeMsg != null ? safeMsg : ""
             ));
         }
         return this;
@@ -135,7 +148,11 @@ public class SwarmSpan implements AutoCloseable {
 
     public SwarmSpan addEvent(String eventName, Map<String, Object> eventAttributes) {
         if (eventName != null) {
-            events.add(new SpanEvent(eventName, eventAttributes));
+            Map<String, Object> safeAttrs = eventAttributes;
+            if (eventAttributes != null && !eventAttributes.isEmpty()) {
+                safeAttrs = com.agent.guardrails.SecretRedactor.redactMap(eventAttributes);
+            }
+            events.add(new SpanEvent(eventName, safeAttrs));
         }
         return this;
     }

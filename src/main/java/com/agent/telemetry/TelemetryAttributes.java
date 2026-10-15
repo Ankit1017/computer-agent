@@ -40,4 +40,6 @@ public final class TelemetryAttributes {
     public static final String GUARDRAIL_WARNING = "guardrail.warning";
     public static final String GUARDRAIL_BLOCKED = "guardrail.blocked";
     public static final String GUARDRAIL_REASON = "guardrail.reason";
+    public static final String GUARDRAIL_REDACTED = "guardrail.redacted";
+    public static final String GUARDRAIL_REDACTION_COUNT = "guardrail.redaction_count";
 }

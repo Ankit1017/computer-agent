@@ -60,6 +60,7 @@ graph TD
         MemoryToolsFacade["MemoryToolsFacade"]
         ContextToolsFacade["ContextToolsFacade"]
         Security["SecurityInterceptor (Fair ReentrantLock HITL Gate)"]
+        Guardrails["Enterprise Guardrails (com.agent.guardrails)"]
         RobotActuator["java.awt.Robot Desktop Actuator"]
         OSProcess["CommandExecutorService (Tree ProcessHandle & Gobblers)"]
         FileService["FileSystemService (Atomic .bak Backups)"]
@@ -71,6 +72,10 @@ graph TD
     SubAgents --> WebToolsFacade
     SubAgents --> MemoryToolsFacade
     SubAgents --> ContextToolsFacade
+
+    TerminalFacade --> Guardrails
+    WebToolsFacade --> Guardrails
+    Guardrails --> Security
 
     TerminalFacade --> Security
     VisionFacade --> Security
@@ -166,8 +171,33 @@ Enterprise-grade distributed tracing is integrated throughout the engine via `Sw
 
 ---
 
-## 6. Distribution, Testing & Operational Health
+## 6. Enterprise Guardrails & Self-Defense (Phase 10.8.2)
+
+To eliminate infinite tool loops, blind file overwrite hazards, SSRF vulnerabilities, prompt injection attacks, and credential leaks, the framework includes a comprehensive self-defense subsystem under `com.agent.guardrails`:
+
+### 6.1 Tool Loop Circuit Breakers (`ToolLoopGuard`)
+- **Identical Tool Repeat Detection:** Breaks consecutive identical tool calls (`A -> A -> A`) with identical parameters (default threshold: 3).
+- **Two-Step Ping-Pong Oscillation:** Detects back-and-forth ping-pong oscillations (`A -> B -> A -> B -> A -> B`) across window sizes up to 10.
+- **Runaway Turn Ceiling:** Hard limit on total tool executions within a single agent turn (default: 25).
+- **Automatic Span Interception:** Injects `guardrail.blocked = true`, `guardrail.reason`, and sets `SpanStatus.ERROR` before tripping, aborting wasted model generation.
+
+### 6.2 Read-Before-Write File Context Gate & Diffs (`FileContextGate`, `UnifiedDiffGenerator`)
+- **Read-Before-Write Enforcement:** Prevents agents from blindly overwriting existing files without inspecting them first via `readFile` or `readFileLines`.
+- **Stale-Write Conflict Detection:** Computes SHA-256 fingerprints upon reading; if an external process modifies the file before the write executes, the gate rejects the stale mutation.
+- **Unified Hunk Diffs:** Automatically outputs standard unified diffs (`--- a/...`, `+++ b/...`, `@@ ... @@`) upon successful mutations.
+
+### 6.3 SSRF Network Guard & Untrusted Content Sanitization (`WebUrlPolicyGuard`, `UntrustedContentSanitizer`)
+- **Protocol & Network Boundary Isolation:** Restricts browser navigation strictly to `http` and `https`, blocking non-HTTP schemes (`file://`, `javascript:`, `data:`, `ftp://`). Blocks local hostnames (`localhost`, `*.internal`, `instance-data`), loopback (`127.0.0.0/8`, `::1`), link-local / cloud metadata endpoints (`169.254.169.254`), and RFC-1918 private LANs (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+- **Prompt Injection & Spoofed Header Defanging:** Scrapes untrusted pages and neutralizes injection overrides (`ignore all previous instructions`, `you are now in developer mode`), strips raw control tokens (`<|im_start|>`, `<|eot_id|>`), and neutralizes spoofed internal headers.
+
+### 6.4 Secret & Credential Redaction Engine (`SecretRedactor`)
+- **Comprehensive Pattern Scrubbing:** High-performance, zero-dependency pre-compiled regex engine scrubbing AI API keys (OpenAI, Anthropic, Google, Slack), GitHub PATs, AWS access keys, bearer tokens, PEM private keys, database connection URI passwords, and JSON/YAML/.env secret assignments.
+- **Automatic Telemetry & Checkpoint Scrubbing:** Deeply scrubs spans in `SwarmSpan` (`.traces/swarm_traces.jsonl`), trace exporters, and workflow state data before persisting to disk (`.checkpoints/`).
+
+---
+
+## 7. Distribution, Testing & Operational Health
 
 - **Executable Fat JAR:** Shaded via `maven-shade-plugin` with `ServicesResourceTransformer` and `ManifestResourceTransformer` into `target/computer-agent-1.0.0-SNAPSHOT.jar`.
 - **Built-In Workflow Catalog:** Packaged into classpath resources under `workflows/`: `research_pipeline.json`, `code_review_pipeline.json`, and `saga_release_pipeline.json`.
-- **Automated Test Coverage:** Comprehensive test suite of **232 automated tests passing with 0 failures and 0 errors**, validating unit, security isolation, concurrency, BSP supersteps, Saga rollbacks, reactive pub/sub, and distributed telemetry.
+- **Automated Test Coverage:** Comprehensive test suite of **260 automated tests passing with 0 failures and 0 errors**, validating unit, security isolation, concurrency, BSP supersteps, Saga rollbacks, reactive pub/sub, distributed telemetry, and Phase 10.8.2 Enterprise Guardrails.

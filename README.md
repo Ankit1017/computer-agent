@@ -66,10 +66,15 @@ graph TD
         MemoryToolsFacade["MemoryToolsFacade"]
         ContextToolsFacade["ContextToolsFacade"]
         Security["SecurityInterceptor (Fair ReentrantLock HITL Gate)"]
+        Guardrails["Enterprise Guardrails (com.agent.guardrails)"]
         RobotActuator["java.awt.Robot Desktop Actuator"]
         OSProcess["CommandExecutorService (Tree ProcessHandle & Gobblers)"]
         FileService["FileSystemService (Atomic .bak Backups)"]
     end
+
+    TerminalFacade --> Guardrails
+    WebToolsFacade --> Guardrails
+    Guardrails --> Security
 
     TerminalFacade --> Security
     VisionFacade --> Security
@@ -255,6 +260,13 @@ com.agent
 - All tool executions automatically open child `tool.execute` spans recording tool name, arguments, latency, and status.
 - Distributed traces persist to `.traces/swarm_traces.jsonl` and are queryable via `getTelemetrySummary` and `getRecentTraces`.
 
+### 7. Enterprise Guardrails & Self-Defense (Phase 10.8.2)
+- **`ToolLoopGuard`:** Repeat-tool loop circuit breaker and runaway execution guard preventing infinite LLM loops (`A -> A -> A` identical repeat, `A -> B -> A -> B` ping-pong, and max turn limits) with OpenTelemetry span interception.
+- **`FileContextGate` & `UnifiedDiffGenerator`:** Read-before-write safety gate preventing blind file writes, detecting concurrent external modifications via SHA-256 fingerprinting, and generating unified hunk diffs (`--- a/...`, `+++ b/...`, `@@ ... @@`).
+- **`WebUrlPolicyGuard`:** SSRF network guard blocking access to loopback (`127.0.0.0/8`, `::1`), wildcard (`0.0.0.0`), link-local / cloud metadata (`169.254.169.254`, `metadata.google.internal`), and RFC-1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+- **`UntrustedContentSanitizer`:** Neutralizes prompt injection overrides (`ignore all previous instructions`, `you are now in developer mode`), strips raw ChatML / Llama control tokens (`<|im_start|>`, `<|eot_id|>`), and defangs spoofed internal headers.
+- **`SecretRedactor`:** Zero-dependency regex engine scrubbing API keys (OpenAI, Anthropic, Google, Slack), GitHub PATs, AWS access keys, bearer tokens, PEM private keys, database URI passwords, and key-value secret assignments across telemetry traces (`.traces/swarm_traces.jsonl`) and state checkpoints (`.checkpoints/`).
+
 ---
 
 ## 💡 Example CLI Prompts
@@ -344,7 +356,7 @@ The project maintains a rigorous, zero-failure test suite:
 ```cmd
 mvn test
 ```
-*Current test suite: **232 tests passing, 0 failures, 0 errors** covering all enterprise packages, DAG validation, typed channel reducers, cooperative HITL suspension, Saga pattern rollbacks, reactive blackboard pub/sub, process tree isolation, and OpenTelemetry trace propagation.*
+*Current test suite: **260 tests passing, 0 failures, 0 errors** covering all enterprise packages, DAG validation, typed channel reducers, cooperative HITL suspension, Saga pattern rollbacks, reactive blackboard pub/sub, process tree isolation, OpenTelemetry trace propagation, and Phase 10.8.2 Enterprise Guardrails (loop breaker, file gate, SSRF network guard, prompt sanitizer, and secret redactor).*
 
 ---
 
