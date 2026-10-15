@@ -1,0 +1,4 @@
+# Graphify ignore patterns
+src/test/
+*Test.java
+*Tests.java
