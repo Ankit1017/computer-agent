@@ -3,9 +3,14 @@ package com.agent.tools.vision;
 import com.agent.guardrails.UntrustedContentSanitizer;
 import com.agent.telemetry.SwarmTelemetry;
 import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.vision.model.GuiActionStep;
+import com.agent.tools.vision.model.ScreenDiffResult;
 import com.agent.tools.vision.model.WindowInfo;
 import com.agent.tools.vision.services.CoordinateConverter;
 import com.agent.tools.vision.services.DesktopWindowService;
+import com.agent.tools.vision.services.ScreenDiffService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.data.message.ImageContent;
@@ -26,7 +31,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 public class VisionToolsFacade {
     private final SecurityInterceptor security;
@@ -36,6 +44,9 @@ public class VisionToolsFacade {
     private final java.awt.datatransfer.Clipboard clipboard;
     private final CoordinateConverter coordinateConverter;
     private final DesktopWindowService desktopWindowService;
+    private final ScreenDiffService screenDiffService;
+    private final ObjectMapper objectMapper;
+    private boolean verifyActionsVisually = true;
     private static final int GRID_COLS = 10;
     private static final int GRID_ROWS = 10;
 
@@ -59,6 +70,8 @@ public class VisionToolsFacade {
         this.clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
         this.coordinateConverter = new CoordinateConverter(this.screenSize);
         this.desktopWindowService = new DesktopWindowService(this.coordinateConverter);
+        this.screenDiffService = new ScreenDiffService();
+        this.objectMapper = new ObjectMapper();
     }
 
     public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize) {
@@ -70,6 +83,10 @@ public class VisionToolsFacade {
     }
 
     public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize, java.awt.datatransfer.Clipboard clipboard, DesktopWindowService desktopWindowService) {
+        this(security, robot, visionModel, screenSize, clipboard, desktopWindowService, null);
+    }
+
+    public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize, java.awt.datatransfer.Clipboard clipboard, DesktopWindowService desktopWindowService, ScreenDiffService screenDiffService) {
         this.security = security;
         this.robot = robot;
         this.visionModel = visionModel;
@@ -77,10 +94,53 @@ public class VisionToolsFacade {
         this.clipboard = clipboard != null ? clipboard : Toolkit.getDefaultToolkit().getSystemClipboard();
         this.coordinateConverter = new CoordinateConverter(this.screenSize);
         this.desktopWindowService = (desktopWindowService != null) ? desktopWindowService : new DesktopWindowService(this.coordinateConverter);
+        this.screenDiffService = (screenDiffService != null) ? screenDiffService : new ScreenDiffService();
+        this.objectMapper = new ObjectMapper();
     }
 
     public DesktopWindowService getDesktopWindowService() {
         return desktopWindowService;
+    }
+
+    public ScreenDiffService getScreenDiffService() {
+        return screenDiffService;
+    }
+
+    public boolean isVerifyActionsVisually() {
+        return verifyActionsVisually;
+    }
+
+    public void setVerifyActionsVisually(boolean verifyActionsVisually) {
+        this.verifyActionsVisually = verifyActionsVisually;
+    }
+
+    private BufferedImage captureScreenSafe() {
+        if (robot == null || screenSize == null || screenSize.width <= 0 || screenSize.height <= 0) {
+            return null;
+        }
+        try {
+            return robot.createScreenCapture(new Rectangle(screenSize));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String wrapWithVisualVerification(Supplier<String> actionExecution) {
+        BufferedImage before = verifyActionsVisually ? captureScreenSafe() : null;
+        String result = actionExecution.get();
+        if (before != null) {
+            try {
+                if (robot != null) {
+                    robot.delay(50);
+                }
+            } catch (Exception ignored) {}
+            BufferedImage after = captureScreenSafe();
+            if (after != null) {
+                ScreenDiffResult diff = screenDiffService.compare(before, after, coordinateConverter);
+                return result + " " + diff.toVerificationSummary();
+            }
+        }
+        return result;
     }
 
     public int normalizedToPixelX(int normX) {
@@ -332,72 +392,74 @@ public class VisionToolsFacade {
                     if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
                         return "Error: Invalid grid ID. Must be between 0 and 99.";
                     }
+                    return wrapWithVisualVerification(() -> {
+                        int cellWidth = screenSize.width / GRID_COLS;
+                        int cellHeight = screenSize.height / GRID_ROWS;
 
-                    int cellWidth = screenSize.width / GRID_COLS;
-                    int cellHeight = screenSize.height / GRID_ROWS;
+                        int col = gridId % GRID_COLS;
+                        int row = gridId / GRID_COLS;
 
-                    int col = gridId % GRID_COLS;
-                    int row = gridId / GRID_COLS;
+                        // Calculate center of the cell
+                        int targetX = (col * cellWidth) + (cellWidth / 2);
+                        int targetY = (row * cellHeight) + (cellHeight / 2);
 
-                    // Calculate center of the cell
-                    int targetX = (col * cellWidth) + (cellWidth / 2);
-                    int targetY = (row * cellHeight) + (cellHeight / 2);
+                        if (!security.requestPermission("click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
+                            return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
+                        }
 
-                    if (!security.requestPermission("click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
-                        return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
-                    }
-
-                    try {
-                        robot.mouseMove(targetX, targetY);
-                        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-                        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-                        return "Clicked successfully at Grid ID " + gridId + ".";
-                    } catch (Exception e) {
-                        return "Error clicking mouse: " + e.getMessage();
-                    }
+                        try {
+                            robot.mouseMove(targetX, targetY);
+                            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                            return "Clicked successfully at Grid ID " + gridId + ".";
+                        } catch (Exception e) {
+                            return "Error clicking mouse: " + e.getMessage();
+                        }
+                    });
                 });
     }
 
     @Tool("Type text into the currently focused window using the clipboard.")
     public String typeText(@P("The text to type") String text) {
-        return SwarmTelemetry.executeTool("typeText", SwarmTelemetry.formatArgs("text", text), () -> {
-            String safeText = (text == null) ? "" : text;
-            if (!security.requestPermission("type text", safeText)) {
-                return "ACTION REJECTED: User explicitly denied typing text. Do not retry this action.";
-            }
-            try {
-                StringSelection stringSelection = new StringSelection(safeText);
-                int attempts = 0;
-                while (true) {
-                    try {
-                        clipboard.setContents(stringSelection, null);
-                        break;
-                    } catch (IllegalStateException e) {
-                        if (++attempts >= 5) {
-                            throw e;
-                        }
-                        try {
-                            Thread.sleep(50);
-                        } catch (InterruptedException ignored) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
+        return SwarmTelemetry.executeTool("typeText", SwarmTelemetry.formatArgs("text", text),
+                () -> wrapWithVisualVerification(() -> {
+                    String safeText = (text == null) ? "" : text;
+                    if (!security.requestPermission("type text", safeText)) {
+                        return "ACTION REJECTED: User explicitly denied typing text. Do not retry this action.";
                     }
-                }
+                    try {
+                        StringSelection stringSelection = new StringSelection(safeText);
+                        int attempts = 0;
+                        while (true) {
+                            try {
+                                clipboard.setContents(stringSelection, null);
+                                break;
+                            } catch (IllegalStateException e) {
+                                if (++attempts >= 5) {
+                                    throw e;
+                                }
+                                try {
+                                    Thread.sleep(50);
+                                } catch (InterruptedException ignored) {
+                                    Thread.currentThread().interrupt();
+                                    break;
+                                }
+                            }
+                        }
 
-                boolean isMac = System.getProperty("os.name").toLowerCase().contains("mac");
-                int modifierKey = isMac ? KeyEvent.VK_META : KeyEvent.VK_CONTROL;
+                        boolean isMac = System.getProperty("os.name").toLowerCase().contains("mac");
+                        int modifierKey = isMac ? KeyEvent.VK_META : KeyEvent.VK_CONTROL;
 
-                robot.keyPress(modifierKey);
-                robot.keyPress(KeyEvent.VK_V);
-                robot.keyRelease(KeyEvent.VK_V);
-                robot.keyRelease(modifierKey);
+                        robot.keyPress(modifierKey);
+                        robot.keyPress(KeyEvent.VK_V);
+                        robot.keyRelease(KeyEvent.VK_V);
+                        robot.keyRelease(modifierKey);
 
-                return "Text typed successfully.";
-            } catch (Exception e) {
-                return "Error typing text: " + e.getMessage();
-            }
-        });
+                        return "Text typed successfully.";
+                    } catch (Exception e) {
+                        return "Error typing text: " + e.getMessage();
+                    }
+                }));
     }
 
     @Tool("Click at a precise relative offset inside a grid cell (0-99). offsetPercentX and offsetPercentY range from 0.0 (top-left) to 1.0 (bottom-right). Center is 0.5, 0.5.")
@@ -411,169 +473,183 @@ public class VisionToolsFacade {
                     if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
                         return "Error: Invalid grid ID. Must be between 0 and 99.";
                     }
-                    double ox = (offsetPercentX != null) ? offsetPercentX : 0.5;
-                    double oy = (offsetPercentY != null) ? offsetPercentY : 0.5;
-                    double clampX = Math.max(0.0, Math.min(1.0, ox));
-                    double clampY = Math.max(0.0, Math.min(1.0, oy));
+                    return wrapWithVisualVerification(() -> {
+                        double ox = (offsetPercentX != null) ? offsetPercentX : 0.5;
+                        double oy = (offsetPercentY != null) ? offsetPercentY : 0.5;
+                        double clampX = Math.max(0.0, Math.min(1.0, ox));
+                        double clampY = Math.max(0.0, Math.min(1.0, oy));
 
-                    int cellWidth = screenSize.width / GRID_COLS;
-                    int cellHeight = screenSize.height / GRID_ROWS;
-                    int col = gridId % GRID_COLS;
-                    int row = gridId / GRID_COLS;
+                        int cellWidth = screenSize.width / GRID_COLS;
+                        int cellHeight = screenSize.height / GRID_ROWS;
+                        int col = gridId % GRID_COLS;
+                        int row = gridId / GRID_COLS;
 
-                    int targetX = (int) ((col * cellWidth) + (clampX * cellWidth));
-                    int targetY = (int) ((row * cellHeight) + (clampY * cellHeight));
+                        int targetX = (int) ((col * cellWidth) + (clampX * cellWidth));
+                        int targetY = (int) ((row * cellHeight) + (clampY * cellHeight));
 
-                    if (!security.requestPermission("precision click at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
-                        return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
-                    }
+                        if (!security.requestPermission("precision click at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
+                            return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
+                        }
 
-                    try {
-                        robot.mouseMove(targetX, targetY);
-                        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-                        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-                        return "Precision clicked at Grid " + gridId + " (" + targetX + ", " + targetY + ").";
-                    } catch (Exception e) {
-                        return "Error precision clicking: " + e.getMessage();
-                    }
+                        try {
+                            robot.mouseMove(targetX, targetY);
+                            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                            return "Precision clicked at Grid " + gridId + " (" + targetX + ", " + targetY + ").";
+                        } catch (Exception e) {
+                            return "Error precision clicking: " + e.getMessage();
+                        }
+                    });
                 });
     }
 
     @Tool("Double-click the mouse at the center of a grid ID (0-99).")
     public String doubleClickGridId(@P("Grid cell ID (0-99)") Integer gridId) {
-        return SwarmTelemetry.executeTool("doubleClickGridId", SwarmTelemetry.formatArgs("gridId", gridId), () -> {
-            if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
-                return "Error: Invalid grid ID. Must be between 0 and 99.";
-            }
-            int cellWidth = screenSize.width / GRID_COLS;
-            int cellHeight = screenSize.height / GRID_ROWS;
-            int targetX = (gridId % GRID_COLS) * cellWidth + (cellWidth / 2);
-            int targetY = (gridId / GRID_COLS) * cellHeight + (cellHeight / 2);
+        return SwarmTelemetry.executeTool("doubleClickGridId", SwarmTelemetry.formatArgs("gridId", gridId),
+                () -> {
+                    if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+                        return "Error: Invalid grid ID. Must be between 0 and 99.";
+                    }
+                    return wrapWithVisualVerification(() -> {
+                        int cellWidth = screenSize.width / GRID_COLS;
+                        int cellHeight = screenSize.height / GRID_ROWS;
+                        int targetX = (gridId % GRID_COLS) * cellWidth + (cellWidth / 2);
+                        int targetY = (gridId / GRID_COLS) * cellHeight + (cellHeight / 2);
 
-            if (!security.requestPermission("double-click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
-                return "ACTION REJECTED: User explicitly denied the double click. Do not retry this action.";
-            }
+                        if (!security.requestPermission("double-click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
+                            return "ACTION REJECTED: User explicitly denied the double click. Do not retry this action.";
+                        }
 
-            try {
-                robot.mouseMove(targetX, targetY);
-                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-                robot.delay(100);
-                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-                return "Double-clicked at Grid ID " + gridId + ".";
-            } catch (Exception e) {
-                return "Error double clicking: " + e.getMessage();
-            }
-        });
+                        try {
+                            robot.mouseMove(targetX, targetY);
+                            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                            robot.delay(100);
+                            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                            return "Double-clicked at Grid ID " + gridId + ".";
+                        } catch (Exception e) {
+                            return "Error double clicking: " + e.getMessage();
+                        }
+                    });
+                });
     }
 
     @Tool("Right-click (context menu) at the center of a grid ID (0-99).")
     public String rightClickGridId(@P("Grid cell ID (0-99)") Integer gridId) {
-        return SwarmTelemetry.executeTool("rightClickGridId", SwarmTelemetry.formatArgs("gridId", gridId), () -> {
-            if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
-                return "Error: Invalid grid ID. Must be between 0 and 99.";
-            }
-            int cellWidth = screenSize.width / GRID_COLS;
-            int cellHeight = screenSize.height / GRID_ROWS;
-            int targetX = (gridId % GRID_COLS) * cellWidth + (cellWidth / 2);
-            int targetY = (gridId / GRID_COLS) * cellHeight + (cellHeight / 2);
+        return SwarmTelemetry.executeTool("rightClickGridId", SwarmTelemetry.formatArgs("gridId", gridId),
+                () -> {
+                    if (gridId == null || gridId < 0 || gridId >= (GRID_COLS * GRID_ROWS)) {
+                        return "Error: Invalid grid ID. Must be between 0 and 99.";
+                    }
+                    return wrapWithVisualVerification(() -> {
+                        int cellWidth = screenSize.width / GRID_COLS;
+                        int cellHeight = screenSize.height / GRID_ROWS;
+                        int targetX = (gridId % GRID_COLS) * cellWidth + (cellWidth / 2);
+                        int targetY = (gridId / GRID_COLS) * cellHeight + (cellHeight / 2);
 
-            if (!security.requestPermission("right-click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
-                return "ACTION REJECTED: User explicitly denied the right click. Do not retry this action.";
-            }
+                        if (!security.requestPermission("right-click mouse at", "Grid ID:" + gridId + " (X:" + targetX + ", Y:" + targetY + ")")) {
+                            return "ACTION REJECTED: User explicitly denied the right click. Do not retry this action.";
+                        }
 
-            try {
-                robot.mouseMove(targetX, targetY);
-                robot.mousePress(InputEvent.BUTTON3_DOWN_MASK);
-                robot.mouseRelease(InputEvent.BUTTON3_DOWN_MASK);
-                return "Right-clicked at Grid ID " + gridId + ".";
-            } catch (Exception e) {
-                return "Error right clicking: " + e.getMessage();
-            }
-        });
+                        try {
+                            robot.mouseMove(targetX, targetY);
+                            robot.mousePress(InputEvent.BUTTON3_DOWN_MASK);
+                            robot.mouseRelease(InputEvent.BUTTON3_DOWN_MASK);
+                            return "Right-clicked at Grid ID " + gridId + ".";
+                        } catch (Exception e) {
+                            return "Error right clicking: " + e.getMessage();
+                        }
+                    });
+                });
     }
 
     @Tool("Scroll the mouse wheel. Positive notches scroll down; negative notches scroll up.")
     public String scrollMouse(@P("Number of scroll wheel notches (e.g., 5 for down, -5 for up)") Integer notches) {
-        return SwarmTelemetry.executeTool("scrollMouse", SwarmTelemetry.formatArgs("notches", notches), () -> {
-            int n = (notches != null) ? notches : 5;
-            if (!security.requestPermission("scroll mouse wheel", n + " notches")) {
-                return "ACTION REJECTED: User explicitly denied mouse scroll. Do not retry this action.";
+        return SwarmTelemetry.executeTool("scrollMouse", SwarmTelemetry.formatArgs("notches", notches),
+                () -> wrapWithVisualVerification(() -> {
+                    int n = (notches != null) ? notches : 5;
+                    if (!security.requestPermission("scroll mouse wheel", n + " notches")) {
+                        return "ACTION REJECTED: User explicitly denied mouse scroll. Do not retry this action.";
+                    }
+                    try {
+                        robot.mouseWheel(n);
+                        return "Scrolled mouse " + n + " notches.";
+                    } catch (Exception e) {
+                        return "Error scrolling: " + e.getMessage();
+                    }
+                }));
+    }
+
+    private String internalPressHotkey(String hotkey) {
+        if (hotkey == null || hotkey.isBlank()) return "Error: Hotkey string cannot be empty.";
+        String[] parts = hotkey.trim().toLowerCase().split("\\+");
+        List<Integer> keyCodes = new ArrayList<>();
+
+        for (String part : parts) {
+            part = part.trim();
+            switch (part) {
+                case "ctrl", "control" -> keyCodes.add(KeyEvent.VK_CONTROL);
+                case "alt" -> keyCodes.add(KeyEvent.VK_ALT);
+                case "shift" -> keyCodes.add(KeyEvent.VK_SHIFT);
+                case "win", "meta", "cmd" -> keyCodes.add(KeyEvent.VK_WINDOWS);
+                case "enter", "return" -> keyCodes.add(KeyEvent.VK_ENTER);
+                case "esc", "escape" -> keyCodes.add(KeyEvent.VK_ESCAPE);
+                case "tab" -> keyCodes.add(KeyEvent.VK_TAB);
+                case "backspace" -> keyCodes.add(KeyEvent.VK_BACK_SPACE);
+                case "space" -> keyCodes.add(KeyEvent.VK_SPACE);
+                case "up" -> keyCodes.add(KeyEvent.VK_UP);
+                case "down" -> keyCodes.add(KeyEvent.VK_DOWN);
+                case "left" -> keyCodes.add(KeyEvent.VK_LEFT);
+                case "right" -> keyCodes.add(KeyEvent.VK_RIGHT);
+                case "home" -> keyCodes.add(KeyEvent.VK_HOME);
+                case "end" -> keyCodes.add(KeyEvent.VK_END);
+                case "pageup", "pgup" -> keyCodes.add(KeyEvent.VK_PAGE_UP);
+                case "pagedown", "pgdn" -> keyCodes.add(KeyEvent.VK_PAGE_DOWN);
+                case "delete", "del" -> keyCodes.add(KeyEvent.VK_DELETE);
+                case "insert", "ins" -> keyCodes.add(KeyEvent.VK_INSERT);
+                default -> {
+                    if (part.length() == 1) {
+                        keyCodes.add(KeyEvent.getExtendedKeyCodeForChar(part.charAt(0)));
+                    } else if (part.matches("f\\d{1,2}")) {
+                        int fNum = Integer.parseInt(part.substring(1));
+                        keyCodes.add(KeyEvent.VK_F1 + (fNum - 1));
+                    } else {
+                        return "Error: Unrecognized key '" + part + "'.";
+                    }
+                }
             }
-            try {
-                robot.mouseWheel(n);
-                return "Scrolled mouse " + n + " notches.";
-            } catch (Exception e) {
-                return "Error scrolling: " + e.getMessage();
+        }
+
+        try {
+            // Press keys sequentially
+            for (int code : keyCodes) {
+                robot.keyPress(code);
             }
-        });
+            robot.delay(50);
+            return "Executed hotkey: " + hotkey;
+        } catch (Exception e) {
+            return "Error pressing hotkey: " + e.getMessage();
+        } finally {
+            // Guarantee key release in reverse order to avoid stuck system keys
+            for (int i = keyCodes.size() - 1; i >= 0; i--) {
+                try {
+                    robot.keyRelease(keyCodes.get(i));
+                } catch (Exception ignored) {}
+            }
+        }
     }
 
     @Tool("Trigger a key or combination hotkey (e.g., 'enter', 'esc', 'tab', 'ctrl+s', 'alt+f4', 'ctrl+shift+p').")
     public String pressHotkey(@P("Hotkey combination separated by '+'") String hotkey) {
-        return SwarmTelemetry.executeTool("pressHotkey", SwarmTelemetry.formatArgs("hotkey", hotkey), () -> {
-            if (hotkey == null || hotkey.isBlank()) return "Error: Hotkey string cannot be empty.";
-            if (!security.requestPermission("press hotkey", hotkey)) {
-                return "ACTION REJECTED: User explicitly denied hotkey press. Do not retry this action.";
-            }
-
-            String[] parts = hotkey.trim().toLowerCase().split("\\+");
-            java.util.List<Integer> keyCodes = new java.util.ArrayList<>();
-
-            for (String part : parts) {
-                part = part.trim();
-                switch (part) {
-                    case "ctrl", "control" -> keyCodes.add(KeyEvent.VK_CONTROL);
-                    case "alt" -> keyCodes.add(KeyEvent.VK_ALT);
-                    case "shift" -> keyCodes.add(KeyEvent.VK_SHIFT);
-                    case "win", "meta", "cmd" -> keyCodes.add(KeyEvent.VK_WINDOWS);
-                    case "enter", "return" -> keyCodes.add(KeyEvent.VK_ENTER);
-                    case "esc", "escape" -> keyCodes.add(KeyEvent.VK_ESCAPE);
-                    case "tab" -> keyCodes.add(KeyEvent.VK_TAB);
-                    case "backspace" -> keyCodes.add(KeyEvent.VK_BACK_SPACE);
-                    case "space" -> keyCodes.add(KeyEvent.VK_SPACE);
-                    case "up" -> keyCodes.add(KeyEvent.VK_UP);
-                    case "down" -> keyCodes.add(KeyEvent.VK_DOWN);
-                    case "left" -> keyCodes.add(KeyEvent.VK_LEFT);
-                    case "right" -> keyCodes.add(KeyEvent.VK_RIGHT);
-                    case "home" -> keyCodes.add(KeyEvent.VK_HOME);
-                    case "end" -> keyCodes.add(KeyEvent.VK_END);
-                    case "pageup", "pgup" -> keyCodes.add(KeyEvent.VK_PAGE_UP);
-                    case "pagedown", "pgdn" -> keyCodes.add(KeyEvent.VK_PAGE_DOWN);
-                    case "delete", "del" -> keyCodes.add(KeyEvent.VK_DELETE);
-                    case "insert", "ins" -> keyCodes.add(KeyEvent.VK_INSERT);
-                    default -> {
-                        if (part.length() == 1) {
-                            keyCodes.add(KeyEvent.getExtendedKeyCodeForChar(part.charAt(0)));
-                        } else if (part.matches("f\\d{1,2}")) {
-                            int fNum = Integer.parseInt(part.substring(1));
-                            keyCodes.add(KeyEvent.VK_F1 + (fNum - 1));
-                        } else {
-                            return "Error: Unrecognized key '" + part + "'.";
-                        }
+        return SwarmTelemetry.executeTool("pressHotkey", SwarmTelemetry.formatArgs("hotkey", hotkey),
+                () -> wrapWithVisualVerification(() -> {
+                    if (hotkey == null || hotkey.isBlank()) return "Error: Hotkey string cannot be empty.";
+                    if (!security.requestPermission("press hotkey", hotkey)) {
+                        return "ACTION REJECTED: User explicitly denied hotkey press. Do not retry this action.";
                     }
-                }
-            }
-
-            try {
-                // Press keys sequentially
-                for (int code : keyCodes) {
-                    robot.keyPress(code);
-                }
-                robot.delay(50);
-                return "Executed hotkey: " + hotkey;
-            } catch (Exception e) {
-                return "Error pressing hotkey: " + e.getMessage();
-            } finally {
-                // Guarantee key release in reverse order to avoid stuck system keys
-                for (int i = keyCodes.size() - 1; i >= 0; i--) {
-                    try {
-                        robot.keyRelease(keyCodes.get(i));
-                    } catch (Exception ignored) {}
-                }
-            }
-        });
+                    return internalPressHotkey(hotkey);
+                }));
     }
 
     @Tool("Get the current mouse cursor position in normalized [0..1000] and physical screen pixel coordinates.")
@@ -626,7 +702,7 @@ public class VisionToolsFacade {
             @P("Number of clicks: 1 for single click, 2 for double click (default: 1)") Integer clickCount) {
         return SwarmTelemetry.executeTool("clickCoordinates",
                 SwarmTelemetry.formatArgs("normX", normX, "normY", normY, "button", button, "clickCount", clickCount),
-                () -> {
+                () -> wrapWithVisualVerification(() -> {
                     if (normX == null || normY == null || normX < 0 || normX > 1000 || normY < 0 || normY > 1000) {
                         return "Error: Coordinates must be between 0 and 1000.";
                     }
@@ -663,7 +739,7 @@ public class VisionToolsFacade {
                     } catch (Exception e) {
                         return "Error clicking mouse: " + e.getMessage();
                     }
-                });
+                }));
     }
 
     @Tool("Drag and drop from start normalized coordinates to end normalized coordinates [0..1000].")
@@ -674,7 +750,7 @@ public class VisionToolsFacade {
             @P("End vertical coordinate [0..1000]") Integer endNormY) {
         return SwarmTelemetry.executeTool("dragAndDrop",
                 SwarmTelemetry.formatArgs("startNormX", startNormX, "startNormY", startNormY, "endNormX", endNormX, "endNormY", endNormY),
-                () -> {
+                () -> wrapWithVisualVerification(() -> {
                     if (startNormX == null || startNormY == null || endNormX == null || endNormY == null ||
                             startNormX < 0 || startNormX > 1000 || startNormY < 0 || startNormY > 1000 ||
                             endNormX < 0 || endNormX > 1000 || endNormY < 0 || endNormY > 1000) {
@@ -710,7 +786,62 @@ public class VisionToolsFacade {
                     } catch (Exception e) {
                         return "Error performing drag and drop: " + e.getMessage();
                     }
-                });
+                }));
+    }
+
+    private String internalTypeText(String text, boolean clearFirst, boolean pressEnter) {
+        String safeText = (text == null) ? "" : text;
+        try {
+            boolean isMac = System.getProperty("os.name").toLowerCase().contains("mac");
+            int modifierKey = isMac ? KeyEvent.VK_META : KeyEvent.VK_CONTROL;
+
+            if (clearFirst) {
+                robot.keyPress(modifierKey);
+                robot.keyPress(KeyEvent.VK_A);
+                robot.keyRelease(KeyEvent.VK_A);
+                robot.keyRelease(modifierKey);
+                robot.delay(50);
+                robot.keyPress(KeyEvent.VK_BACK_SPACE);
+                robot.keyRelease(KeyEvent.VK_BACK_SPACE);
+                robot.delay(50);
+            }
+
+            if (!safeText.isEmpty()) {
+                StringSelection stringSelection = new StringSelection(safeText);
+                int attempts = 0;
+                while (true) {
+                    try {
+                        clipboard.setContents(stringSelection, null);
+                        break;
+                    } catch (IllegalStateException e) {
+                        if (++attempts >= 5) {
+                            throw e;
+                        }
+                        try {
+                            Thread.sleep(50);
+                        } catch (InterruptedException ignored) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
+                }
+
+                robot.keyPress(modifierKey);
+                robot.keyPress(KeyEvent.VK_V);
+                robot.keyRelease(KeyEvent.VK_V);
+                robot.keyRelease(modifierKey);
+                robot.delay(50);
+            }
+
+            if (pressEnter) {
+                robot.keyPress(KeyEvent.VK_ENTER);
+                robot.keyRelease(KeyEvent.VK_ENTER);
+            }
+
+            return "Text typed into field successfully.";
+        } catch (Exception e) {
+            return "Error typing into field: " + e.getMessage();
+        }
     }
 
     @Tool("Type text into the focused field with optional clear-before-typing and enter-key submission.")
@@ -720,7 +851,7 @@ public class VisionToolsFacade {
             @P("Whether to press Enter after typing the text") Boolean pressEnter) {
         return SwarmTelemetry.executeTool("typeIntoField",
                 SwarmTelemetry.formatArgs("text", text, "clearFirst", clearFirst, "pressEnter", pressEnter),
-                () -> {
+                () -> wrapWithVisualVerification(() -> {
                     String safeText = (text == null) ? "" : text;
                     boolean shouldClear = Boolean.TRUE.equals(clearFirst);
                     boolean shouldEnter = Boolean.TRUE.equals(pressEnter);
@@ -728,59 +859,8 @@ public class VisionToolsFacade {
                     if (!security.requestPermission("type into field", safeText + " (clearFirst=" + shouldClear + ", pressEnter=" + shouldEnter + ")")) {
                         return "ACTION REJECTED: User explicitly denied typing text. Do not retry this action.";
                     }
-
-                    try {
-                        boolean isMac = System.getProperty("os.name").toLowerCase().contains("mac");
-                        int modifierKey = isMac ? KeyEvent.VK_META : KeyEvent.VK_CONTROL;
-
-                        if (shouldClear) {
-                            robot.keyPress(modifierKey);
-                            robot.keyPress(KeyEvent.VK_A);
-                            robot.keyRelease(KeyEvent.VK_A);
-                            robot.keyRelease(modifierKey);
-                            robot.delay(50);
-                            robot.keyPress(KeyEvent.VK_BACK_SPACE);
-                            robot.keyRelease(KeyEvent.VK_BACK_SPACE);
-                            robot.delay(50);
-                        }
-
-                        if (!safeText.isEmpty()) {
-                            StringSelection stringSelection = new StringSelection(safeText);
-                            int attempts = 0;
-                            while (true) {
-                                try {
-                                    clipboard.setContents(stringSelection, null);
-                                    break;
-                                } catch (IllegalStateException e) {
-                                    if (++attempts >= 5) {
-                                        throw e;
-                                    }
-                                    try {
-                                        Thread.sleep(50);
-                                    } catch (InterruptedException ignored) {
-                                        Thread.currentThread().interrupt();
-                                        break;
-                                    }
-                                }
-                            }
-
-                            robot.keyPress(modifierKey);
-                            robot.keyPress(KeyEvent.VK_V);
-                            robot.keyRelease(KeyEvent.VK_V);
-                            robot.keyRelease(modifierKey);
-                            robot.delay(50);
-                        }
-
-                        if (shouldEnter) {
-                            robot.keyPress(KeyEvent.VK_ENTER);
-                            robot.keyRelease(KeyEvent.VK_ENTER);
-                        }
-
-                        return "Text typed into field successfully.";
-                    } catch (Exception e) {
-                        return "Error typing into field: " + e.getMessage();
-                    }
-                });
+                    return internalTypeText(safeText, shouldClear, shouldEnter);
+                }));
     }
 
     @Tool("Read current text from the system clipboard. Sanitizes any untrusted injection tokens or system headers and caps output at 15,000 characters.")
@@ -931,7 +1011,7 @@ public class VisionToolsFacade {
             @P("Vertical relative offset inside window (0.0 to 1.0, default 0.5)") Double offsetPercentY) {
         return SwarmTelemetry.executeTool("clickWindow",
                 SwarmTelemetry.formatArgs("windowQuery", windowQuery, "offsetPercentX", offsetPercentX, "offsetPercentY", offsetPercentY),
-                () -> {
+                () -> wrapWithVisualVerification(() -> {
                     if (windowQuery == null || windowQuery.isBlank()) {
                         return "Error: Window query cannot be empty.";
                     }
@@ -959,6 +1039,247 @@ public class VisionToolsFacade {
                     } catch (Exception e) {
                         return "Error clicking window: " + e.getMessage();
                     }
+                }));
+    }
+
+    @Tool("Poll the screen and block until visual changes cease (settles) or maxWaitMs (default: 3000ms, max: 10000ms) is reached.")
+    public String waitForScreenSettle(
+            @P("Maximum milliseconds to wait for screen to stabilize (default 3000, max 10000)") Integer maxWaitMs) {
+        return SwarmTelemetry.executeTool("waitForScreenSettle",
+                SwarmTelemetry.formatArgs("maxWaitMs", maxWaitMs),
+                () -> {
+                    int timeout = (maxWaitMs != null && maxWaitMs > 0) ? Math.min(maxWaitMs, 10000) : 3000;
+                    ScreenDiffResult diff = screenDiffService.waitForScreenSettle(
+                            this::captureScreenSafe,
+                            coordinateConverter,
+                            timeout,
+                            100
+                    );
+                    if (diff.totalPixels() == 0) {
+                        return "Screen settle check completed (display capture unavailable/headless).";
+                    }
+                    if (diff.visuallyChanged()) {
+                        return "Screen settled after visual activity. " + diff.toVerificationSummary();
+                    } else {
+                        return "Screen remained visually stable (no significant changes detected). " + diff.toVerificationSummary();
+                    }
+                });
+    }
+
+    @Tool("Execute a compound sequence of GUI actions atomically in a single turn. Input is a JSON array of step objects, e.g. [{\"action\":\"focus_window\",\"windowQuery\":\"Notepad\"},{\"action\":\"click_coordinates\",\"normX\":500,\"normY\":500},{\"action\":\"type\",\"text\":\"hello\",\"pressEnter\":true}].")
+    public String executeGuiMacro(
+            @P("JSON array of GUI action step objects") String stepsJson) {
+        return SwarmTelemetry.executeTool("executeGuiMacro",
+                SwarmTelemetry.formatArgs("stepsJson", stepsJson),
+                () -> {
+                    if (stepsJson == null || stepsJson.isBlank()) {
+                        return "Error: Macro steps JSON cannot be empty.";
+                    }
+
+                    List<GuiActionStep> steps;
+                    try {
+                        steps = objectMapper.readValue(stepsJson, new TypeReference<List<GuiActionStep>>() {});
+                    } catch (Exception e) {
+                        return "Error parsing macro steps JSON: " + e.getMessage();
+                    }
+
+                    if (steps == null || steps.isEmpty()) {
+                        return "Error: Macro must contain at least one step.";
+                    }
+                    if (steps.size() > 50) {
+                        return "Error: Macro exceeds maximum limit of 50 steps.";
+                    }
+
+                    // Upfront validation of all steps before execution
+                    for (int i = 0; i < steps.size(); i++) {
+                        GuiActionStep step = steps.get(i);
+                        if (step == null || step.action() == null || step.action().isBlank()) {
+                            return "Error: Step " + (i + 1) + " must specify an action.";
+                        }
+                        String act = step.action().trim().toLowerCase().replace("-", "_");
+                        switch (act) {
+                            case "focus_window", "focuswindow", "focus" -> {
+                                if (step.windowQuery() == null || step.windowQuery().isBlank()) {
+                                    return "Error: Step " + (i + 1) + " (focus_window) requires 'windowQuery'.";
+                                }
+                            }
+                            case "control_window", "controlwindow", "control" -> {
+                                if (step.windowQuery() == null || step.windowQuery().isBlank()) {
+                                    return "Error: Step " + (i + 1) + " (control_window) requires 'windowQuery'.";
+                                }
+                                if (step.windowAction() == null || step.windowAction().isBlank()) {
+                                    return "Error: Step " + (i + 1) + " (control_window) requires 'windowAction'.";
+                                }
+                            }
+                            case "click_coordinates", "clickcoordinates", "click" -> {
+                                if (step.normX() == null || step.normY() == null ||
+                                        step.normX() < 0 || step.normX() > 1000 ||
+                                        step.normY() < 0 || step.normY() > 1000) {
+                                    return "Error: Step " + (i + 1) + " (click_coordinates) requires valid normX and normY in [0..1000].";
+                                }
+                            }
+                            case "click_window", "clickwindow" -> {
+                                if (step.windowQuery() == null || step.windowQuery().isBlank()) {
+                                    return "Error: Step " + (i + 1) + " (click_window) requires 'windowQuery'.";
+                                }
+                            }
+                            case "type", "type_text", "typetext", "type_into_field", "typeintofield" -> {
+                                if (step.text() == null) {
+                                    return "Error: Step " + (i + 1) + " (type) requires 'text'.";
+                                }
+                            }
+                            case "hotkey", "press_hotkey", "presshotkey" -> {
+                                if (step.hotkey() == null || step.hotkey().isBlank()) {
+                                    return "Error: Step " + (i + 1) + " (hotkey) requires 'hotkey'.";
+                                }
+                            }
+                            case "drag_and_drop", "draganddrop", "drag" -> {
+                                if (step.normX() == null || step.normY() == null ||
+                                        step.endNormX() == null || step.endNormY() == null ||
+                                        step.normX() < 0 || step.normX() > 1000 ||
+                                        step.normY() < 0 || step.normY() > 1000 ||
+                                        step.endNormX() < 0 || step.endNormX() > 1000 ||
+                                        step.endNormY() < 0 || step.endNormY() > 1000) {
+                                    return "Error: Step " + (i + 1) + " (drag_and_drop) requires valid normX, normY, endNormX, and endNormY in [0..1000].";
+                                }
+                            }
+                            case "scroll", "scroll_mouse", "scrollmouse", "wait", "sleep", "settle", "wait_for_settle", "waitforscreensettle" -> {
+                                // optional parameters
+                            }
+                            default -> {
+                                return "Error: Step " + (i + 1) + " has unrecognized action '" + step.action() + "'.";
+                            }
+                        }
+                    }
+
+                    // Single consolidated security check for the entire macro
+                    String actionSummary = steps.stream()
+                            .map(s -> s.action() != null ? s.action() : "step")
+                            .collect(Collectors.joining(" -> "));
+                    if (!security.requestPermission("execute GUI macro", steps.size() + " steps: " + actionSummary)) {
+                        return "ACTION REJECTED: User explicitly denied GUI macro execution. Do not retry this action.";
+                    }
+
+                    BufferedImage before = verifyActionsVisually ? captureScreenSafe() : null;
+                    List<String> stepSummaries = new ArrayList<>();
+
+                    for (int i = 0; i < steps.size(); i++) {
+                        GuiActionStep step = steps.get(i);
+                        String act = step.action().trim().toLowerCase().replace("-", "_");
+                        try {
+                            switch (act) {
+                                case "focus_window", "focuswindow", "focus" -> {
+                                    String focusRes = desktopWindowService.focusWindow(step.windowQuery());
+                                    stepSummaries.add("Focused window: '" + step.windowQuery() + "' (" + focusRes + ")");
+                                }
+                                case "control_window", "controlwindow", "control" -> {
+                                    String ctrlRes = desktopWindowService.controlWindow(step.windowQuery(), step.windowAction());
+                                    stepSummaries.add("Controlled window '" + step.windowQuery() + "' (" + step.windowAction() + "): " + ctrlRes);
+                                }
+                                case "click_coordinates", "clickcoordinates", "click" -> {
+                                    int tx = normalizedToPixelX(step.normX());
+                                    int ty = normalizedToPixelY(step.normY());
+                                    String btn = (step.button() != null && !step.button().isBlank()) ? step.button().trim().toLowerCase() : "left";
+                                    int count = (step.clickCount() != null && step.clickCount() > 0) ? Math.min(step.clickCount(), 3) : 1;
+                                    int mask = switch (btn) {
+                                        case "right" -> InputEvent.BUTTON3_DOWN_MASK;
+                                        case "middle" -> InputEvent.BUTTON2_DOWN_MASK;
+                                        default -> InputEvent.BUTTON1_DOWN_MASK;
+                                    };
+                                    robot.mouseMove(tx, ty);
+                                    for (int c = 0; c < count; c++) {
+                                        robot.mousePress(mask);
+                                        robot.mouseRelease(mask);
+                                        if (c < count - 1) robot.delay(100);
+                                    }
+                                    stepSummaries.add("Clicked " + btn + " button " + count + " time(s) at normalized (" + step.normX() + ", " + step.normY() + ")");
+                                }
+                                case "click_window", "clickwindow" -> {
+                                    Optional<WindowInfo> opt = desktopWindowService.findWindow(step.windowQuery());
+                                    if (opt.isEmpty()) {
+                                        stepSummaries.add("Window not found for click: '" + step.windowQuery() + "'");
+                                    } else {
+                                        WindowInfo win = opt.get();
+                                        double ox = (step.offsetPercentX() != null) ? step.offsetPercentX() : 0.5;
+                                        double oy = (step.offsetPercentY() != null) ? step.offsetPercentY() : 0.5;
+                                        int tx = normalizedToPixelX(win.relativePointNormX(ox));
+                                        int ty = normalizedToPixelY(win.relativePointNormY(oy));
+                                        robot.mouseMove(tx, ty);
+                                        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                                        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                                        stepSummaries.add("Clicked window [W" + win.markId() + "] '" + win.title() + "' at relative (" + ox + ", " + oy + ")");
+                                    }
+                                }
+                                case "type", "type_text", "typetext", "type_into_field", "typeintofield" -> {
+                                    boolean clear = Boolean.TRUE.equals(step.clearFirst());
+                                    boolean enter = Boolean.TRUE.equals(step.pressEnter());
+                                    internalTypeText(step.text(), clear, enter);
+                                    stepSummaries.add("Typed text (clearFirst=" + clear + ", pressEnter=" + enter + "): \"" + step.text() + "\"");
+                                }
+                                case "hotkey", "press_hotkey", "presshotkey" -> {
+                                    internalPressHotkey(step.hotkey());
+                                    stepSummaries.add("Executed hotkey: " + step.hotkey());
+                                }
+                                case "drag_and_drop", "draganddrop", "drag" -> {
+                                    int sx = normalizedToPixelX(step.normX());
+                                    int sy = normalizedToPixelY(step.normY());
+                                    int ex = normalizedToPixelX(step.endNormX());
+                                    int ey = normalizedToPixelY(step.endNormY());
+                                    robot.mouseMove(sx, sy);
+                                    robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                                    robot.delay(50);
+                                    int stepsCount = 15;
+                                    for (int st = 1; st <= stepsCount; st++) {
+                                        double t = (double) st / (double) stepsCount;
+                                        int currX = (int) Math.round(sx + t * (ex - sx));
+                                        int currY = (int) Math.round(sy + t * (ey - sy));
+                                        robot.mouseMove(currX, currY);
+                                        robot.delay(10);
+                                    }
+                                    robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                                    stepSummaries.add("Dragged and dropped from (" + step.normX() + ", " + step.normY() + ") to (" + step.endNormX() + ", " + step.endNormY() + ")");
+                                }
+                                case "scroll", "scroll_mouse", "scrollmouse" -> {
+                                    int notches = (step.notches() != null) ? step.notches() : 5;
+                                    robot.mouseWheel(notches);
+                                    stepSummaries.add("Scrolled mouse " + notches + " notches");
+                                }
+                                case "wait", "sleep" -> {
+                                    int waitTime = (step.waitMs() != null && step.waitMs() > 0) ? Math.min(step.waitMs(), 10000) : 100;
+                                    try {
+                                        Thread.sleep(waitTime);
+                                    } catch (InterruptedException ie) {
+                                        Thread.currentThread().interrupt();
+                                    }
+                                    stepSummaries.add("Waited " + waitTime + "ms");
+                                }
+                                case "settle", "wait_for_settle", "waitforscreensettle" -> {
+                                    int settleWait = (step.waitMs() != null && step.waitMs() > 0) ? Math.min(step.waitMs(), 10000) : 3000;
+                                    screenDiffService.waitForScreenSettle(this::captureScreenSafe, coordinateConverter, settleWait, 100);
+                                    stepSummaries.add("Waited for screen settle (" + settleWait + "ms max)");
+                                }
+                            }
+                        } catch (Exception ex) {
+                            stepSummaries.add("Step " + (i + 1) + " (" + step.action() + ") error: " + ex.getMessage());
+                        }
+                    }
+
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("Macro executed successfully (").append(steps.size()).append(" steps executed):\n");
+                    for (int i = 0; i < stepSummaries.size(); i++) {
+                        sb.append("  ").append(i + 1).append(". ").append(stepSummaries.get(i)).append("\n");
+                    }
+                    if (before != null) {
+                        try {
+                            if (robot != null) robot.delay(50);
+                        } catch (Exception ignored) {}
+                        BufferedImage after = captureScreenSafe();
+                        if (after != null) {
+                            ScreenDiffResult diff = screenDiffService.compare(before, after, coordinateConverter);
+                            sb.append("\n").append(diff.toVerificationSummary());
+                        }
+                    }
+                    return sb.toString().trim();
                 });
     }
 }
