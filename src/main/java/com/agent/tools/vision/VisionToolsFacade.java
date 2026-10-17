@@ -3,7 +3,9 @@ package com.agent.tools.vision;
 import com.agent.guardrails.UntrustedContentSanitizer;
 import com.agent.telemetry.SwarmTelemetry;
 import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.vision.model.WindowInfo;
 import com.agent.tools.vision.services.CoordinateConverter;
+import com.agent.tools.vision.services.DesktopWindowService;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.data.message.ImageContent;
@@ -21,7 +23,10 @@ import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
+import java.util.Optional;
 
 public class VisionToolsFacade {
     private final SecurityInterceptor security;
@@ -30,6 +35,7 @@ public class VisionToolsFacade {
     private final Dimension screenSize;
     private final java.awt.datatransfer.Clipboard clipboard;
     private final CoordinateConverter coordinateConverter;
+    private final DesktopWindowService desktopWindowService;
     private static final int GRID_COLS = 10;
     private static final int GRID_ROWS = 10;
 
@@ -52,6 +58,7 @@ public class VisionToolsFacade {
                 .build();
         this.clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
         this.coordinateConverter = new CoordinateConverter(this.screenSize);
+        this.desktopWindowService = new DesktopWindowService(this.coordinateConverter);
     }
 
     public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize) {
@@ -59,12 +66,21 @@ public class VisionToolsFacade {
     }
 
     public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize, java.awt.datatransfer.Clipboard clipboard) {
+        this(security, robot, visionModel, screenSize, clipboard, null);
+    }
+
+    public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize, java.awt.datatransfer.Clipboard clipboard, DesktopWindowService desktopWindowService) {
         this.security = security;
         this.robot = robot;
         this.visionModel = visionModel;
         this.screenSize = screenSize != null ? screenSize : new Dimension(1920, 1080);
         this.clipboard = clipboard != null ? clipboard : Toolkit.getDefaultToolkit().getSystemClipboard();
         this.coordinateConverter = new CoordinateConverter(this.screenSize);
+        this.desktopWindowService = (desktopWindowService != null) ? desktopWindowService : new DesktopWindowService(this.coordinateConverter);
+    }
+
+    public DesktopWindowService getDesktopWindowService() {
+        return desktopWindowService;
     }
 
     public int normalizedToPixelX(int normX) {
@@ -148,6 +164,39 @@ public class VisionToolsFacade {
                             g2d.drawLine(cx - 15, cy, cx + 15, cy);
                             g2d.drawLine(cx, cy - 15, cx, cy + 15);
                         }
+
+                        // Dynamic Set-of-Marks Window Overlay
+                        List<WindowInfo> windows = new ArrayList<>();
+                        try {
+                            if (desktopWindowService != null) {
+                                windows = desktopWindowService.listVisibleWindows();
+                            }
+                        } catch (Exception ignored) {}
+
+                        for (WindowInfo win : windows) {
+                            g2d.setColor(win.active() ? Color.GREEN : Color.ORANGE);
+                            g2d.setStroke(new BasicStroke(2.0f));
+                            g2d.drawRect(win.x(), win.y(), win.width(), win.height());
+
+                            String rawTitle = (win.title() != null) ? win.title() : "";
+                            String truncTitle = rawTitle.length() > 25 ? rawTitle.substring(0, 22) + "..." : rawTitle;
+                            String badge = "[W" + win.markId() + (win.active() ? " ACTIVE" : "") + (truncTitle.isEmpty() ? "" : ": " + truncTitle) + "]";
+
+                            int bx = Math.max(0, Math.min(screenSize.width - 150, win.x()));
+                            int by = Math.max(16, Math.min(screenSize.height - 10, win.y() + 16));
+
+                            g2d.setFont(new Font("Arial", Font.BOLD, 12));
+                            FontMetrics fm = g2d.getFontMetrics();
+                            int labelW = fm.stringWidth(badge) + 6;
+                            int labelH = fm.getHeight();
+
+                            g2d.setColor(new Color(0, 0, 0, 180));
+                            g2d.fillRect(bx, by - labelH + 3, labelW, labelH);
+
+                            g2d.setColor(win.active() ? Color.GREEN : Color.WHITE);
+                            g2d.drawString(badge, bx + 3, by);
+                        }
+
                         g2d.dispose();
 
                         // 3. Convert to Base64 (PNG)
@@ -165,9 +214,28 @@ public class VisionToolsFacade {
                             cursorMeta = " (Current cursor position: Unavailable/Headless).";
                         }
 
+                        StringBuilder windowsTable = new StringBuilder();
+                        windowsTable.append("\n\n[[ VISIBLE DESKTOP WINDOWS ]]\n");
+                        if (windows.isEmpty()) {
+                            windowsTable.append("(No visible windows detected)\n");
+                        } else {
+                            for (WindowInfo win : windows) {
+                                windowsTable.append(String.format("- [W%d] \"%s\" (Process: %s, PID: %d)%s | Bounds: [%d, %d, %dx%d], Norm: [%d, %d, %dx%d], Center: (%d, %d)\n",
+                                        win.markId(),
+                                        win.title(),
+                                        win.processName(),
+                                        win.processId(),
+                                        win.active() ? " [ACTIVE]" : "",
+                                        win.x(), win.y(), win.width(), win.height(),
+                                        win.normX(), win.normY(), win.normWidth(), win.normHeight(),
+                                        win.centerNormX(), win.centerNormY()));
+                            }
+                        }
+
                         String prompt = (question != null ? question : "Describe the contents of the screen.")
                                 + " (Note: The image has a 10x10 grid overlay. Reference the red ID numbers 0-99 to specify locations)."
-                                + cursorMeta;
+                                + cursorMeta
+                                + windowsTable.toString();
                         UserMessage msg = UserMessage.from(
                             TextContent.from(prompt),
                             ImageContent.from(base64Image, "image/png")
@@ -762,5 +830,135 @@ public class VisionToolsFacade {
                 return "Error copying selection: " + e.getMessage();
             }
         });
+    }
+
+    @Tool("List all open visible desktop windows with their [W#] Set-of-Marks tags, titles, process names, and normalized bounds.")
+    public String listOpenWindows() {
+        return SwarmTelemetry.executeTool("listOpenWindows", "", () -> {
+            List<WindowInfo> windows = desktopWindowService.listVisibleWindows();
+            if (windows.isEmpty()) {
+                return "No open desktop windows detected.";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("Open Windows (").append(windows.size()).append("):\n");
+            for (WindowInfo win : windows) {
+                sb.append(String.format("- [W%d] \"%s\" (Process: %s, PID: %d)%s | Pixel: [%d, %d, %dx%d], Normalized: [%d, %d, %dx%d], Center: (%d, %d)\n",
+                        win.markId(),
+                        win.title(),
+                        win.processName(),
+                        win.processId(),
+                        win.active() ? " [ACTIVE]" : "",
+                        win.x(), win.y(), win.width(), win.height(),
+                        win.normX(), win.normY(), win.normWidth(), win.normHeight(),
+                        win.centerNormX(), win.centerNormY()));
+            }
+            return sb.toString().trim();
+        });
+    }
+
+    @Tool("Get the currently focused foreground desktop window.")
+    public String getActiveWindow() {
+        return SwarmTelemetry.executeTool("getActiveWindow", "", () -> {
+            Optional<WindowInfo> opt = desktopWindowService.getActiveWindow();
+            if (opt.isEmpty()) {
+                return "No active window detected.";
+            }
+            WindowInfo win = opt.get();
+            return String.format("Active Window: [W%d] \"%s\" (Process: %s, PID: %d) | Normalized Bounds: [%d, %d, %dx%d], Center: (%d, %d).",
+                    win.markId(),
+                    win.title(),
+                    win.processName(),
+                    win.processId(),
+                    win.normX(), win.normY(), win.normWidth(), win.normHeight(),
+                    win.centerNormX(), win.centerNormY());
+        });
+    }
+
+    @Tool("Bring a desktop window to the foreground by matching its title, process name, or mark tag (e.g., 'Notepad', 'chrome', '[W1]').")
+    public String focusWindow(@P("Window title, process name, or mark tag (e.g., 'Notepad', 'chrome', '[W1]')") String windowQuery) {
+        return SwarmTelemetry.executeTool("focusWindow", SwarmTelemetry.formatArgs("windowQuery", windowQuery), () -> {
+            if (windowQuery == null || windowQuery.isBlank()) {
+                return "Error: Window query cannot be empty.";
+            }
+            if (!security.requestPermission("focus window", windowQuery)) {
+                return "ACTION REJECTED: User explicitly denied focusing window. Do not retry this action.";
+            }
+            return desktopWindowService.focusWindow(windowQuery);
+        });
+    }
+
+    @Tool("Control the state of a desktop window: maximize, minimize, restore, or close.")
+    public String controlWindow(
+            @P("Window title, process name, or mark tag (e.g., 'Notepad', '[W1]')") String windowQuery,
+            @P("Action to perform: 'maximize', 'minimize', 'restore', or 'close'") String action) {
+        return SwarmTelemetry.executeTool("controlWindow",
+                SwarmTelemetry.formatArgs("windowQuery", windowQuery, "action", action),
+                () -> {
+                    if (windowQuery == null || windowQuery.isBlank()) {
+                        return "Error: Window query cannot be empty.";
+                    }
+                    if (action == null || action.isBlank()) {
+                        return "Error: Window control action cannot be empty.";
+                    }
+                    if (!security.requestPermission("control window", "Window: '" + windowQuery + "', Action: '" + action + "'")) {
+                        return "ACTION REJECTED: User explicitly denied window control action. Do not retry this action.";
+                    }
+                    return desktopWindowService.controlWindow(windowQuery, action);
+                });
+    }
+
+    @Tool("Launch a desktop application or executable by name or path.")
+    public String launchApplication(
+            @P("Application name or executable path (e.g., 'notepad.exe', 'calc')") String appNameOrPath,
+            @P("Optional command line arguments (e.g., 'C:\\file.txt')") String arguments) {
+        return SwarmTelemetry.executeTool("launchApplication",
+                SwarmTelemetry.formatArgs("appNameOrPath", appNameOrPath, "arguments", arguments),
+                () -> {
+                    if (appNameOrPath == null || appNameOrPath.isBlank()) {
+                        return "Error: Application name or path cannot be empty.";
+                    }
+                    if (!security.requestPermission("launch application", "App: '" + appNameOrPath + "', Args: '" + (arguments != null ? arguments : "") + "'")) {
+                        return "ACTION REJECTED: User explicitly denied launching application. Do not retry this action.";
+                    }
+                    return desktopWindowService.launchApplication(appNameOrPath, arguments);
+                });
+    }
+
+    @Tool("Click inside a desktop window at a relative offset (0.0 to 1.0). Center is 0.5, 0.5; top-left is 0.0, 0.0; top-right is 0.98, 0.02.")
+    public String clickWindow(
+            @P("Window title, process name, or mark tag (e.g., 'Notepad', '[W1]')") String windowQuery,
+            @P("Horizontal relative offset inside window (0.0 to 1.0, default 0.5)") Double offsetPercentX,
+            @P("Vertical relative offset inside window (0.0 to 1.0, default 0.5)") Double offsetPercentY) {
+        return SwarmTelemetry.executeTool("clickWindow",
+                SwarmTelemetry.formatArgs("windowQuery", windowQuery, "offsetPercentX", offsetPercentX, "offsetPercentY", offsetPercentY),
+                () -> {
+                    if (windowQuery == null || windowQuery.isBlank()) {
+                        return "Error: Window query cannot be empty.";
+                    }
+                    Optional<WindowInfo> opt = desktopWindowService.findWindow(windowQuery);
+                    if (opt.isEmpty()) {
+                        return "No visible window found matching query: '" + windowQuery + "'. Use listOpenWindows to see available windows.";
+                    }
+                    WindowInfo win = opt.get();
+                    double ox = (offsetPercentX != null) ? offsetPercentX : 0.5;
+                    double oy = (offsetPercentY != null) ? offsetPercentY : 0.5;
+                    int targetNormX = win.relativePointNormX(ox);
+                    int targetNormY = win.relativePointNormY(oy);
+                    int targetPixelX = normalizedToPixelX(targetNormX);
+                    int targetPixelY = normalizedToPixelY(targetNormY);
+
+                    if (!security.requestPermission("click window", "Window [W" + win.markId() + "] '" + win.title() + "' at (" + ox + ", " + oy + ") -> Norm (" + targetNormX + ", " + targetNormY + ")")) {
+                        return "ACTION REJECTED: User explicitly denied clicking window. Do not retry this action.";
+                    }
+
+                    try {
+                        robot.mouseMove(targetPixelX, targetPixelY);
+                        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                        return "Clicked window [W" + win.markId() + "] ('" + win.title() + "') at relative (" + ox + ", " + oy + ") -> normalized (" + targetNormX + ", " + targetNormY + ") [pixel: " + targetPixelX + ", " + targetPixelY + "].";
+                    } catch (Exception e) {
+                        return "Error clicking window: " + e.getMessage();
+                    }
+                });
     }
 }
