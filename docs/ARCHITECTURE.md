@@ -196,8 +196,38 @@ To eliminate infinite tool loops, blind file overwrite hazards, SSRF vulnerabili
 
 ---
 
-## 7. Distribution, Testing & Operational Health
+---
+
+## 7. Autonomous Computer-Use Agent (CUA) & Advanced Vision (Phase 10.9)
+
+To enable human-level desktop automation without fragile pixel guesswork, the vision subsystem under `com.agent.tools.vision` provides an end-to-end Computer-Use Agent stack:
+
+### 7.1 Precision Coordinate Engine & Normalized Space (`CoordinateConverter`)
+- **Normalized [0..1000] Coordinate System:** Maps continuous normalized [0..1000] coordinates to physical device pixels across arbitrary display resolutions, multi-monitor setups, and high-DPI scalings.
+- **Visual Cursor Rendering & Set-of-Marks (SoM):** Renders visible cursor crosshairs (`+`) at the exact mouse location on captured frames (overcoming native `Robot` OS cursor omission) alongside dual-mode Set-of-Marks grids (10x10 numeric grid and dynamic window bounding tags).
+- **Region Zoom & High-DPI Inspection:** Provides focused sub-region cropping and scaling (`inspectScreenRegion`) for reading dense menus, tiny text, and complex multi-window layouts.
+- **Actuation Suite:** Full mouse and keyboard actuation including drag-and-drop (`dragAndDrop`), clipboard integration (`getClipboardText`), and pre-clearing text fields (`clearFirst`).
+
+### 7.2 Native Desktop Window & Application Management (`DesktopWindowService`, `WindowInfo`)
+- **OS Window Enumeration & Foreground Tracking:** Discovers all visible desktop top-level windows across Windows (`tasklist` / PowerShell) and Linux (`wmctrl` / `xdotool`), extracting PIDs, process names, titles, and exact physical and normalized bounds.
+- **Window Grounding Set-of-Marks Overlay:** Annotates window bounds directly on screenshots with color-coded tags (`[W1]`, `[W2]`, ...) and highlights the active foreground window.
+- **Application Control & Launching:** Brings target windows to foreground (`focusWindow`), minimizes/maximizes/restores/closes windows (`controlWindow`), targets relative points within windows (`clickWindowPoint`), and launches new desktop processes (`launchApp`).
+
+### 7.3 Visual State Diffing, Post-Action Self-Verification & Compound Macros (`ScreenDiffService`, `ScreenDiffResult`)
+- **Sub-Pixel Screen Diffing:** Compares pre-action and post-action desktop screenshots pixel-by-pixel, calculating changed pixel percentage (`changedPixelPercent`), pixel count, and computing the normalized bounding box `[minNormX, minNormY, maxNormX, maxNormY]` of all visual changes.
+- **Post-Action Self-Verification:** Automatically wraps every actuation tool with visual verification, alerting the agent when an action produced a visual change (`[VISUAL VERIFICATION: x.xx% screen change]`) or warns when the UI did not react (`[VISUAL WARNING: 0.00% screen change detected]`).
+- **Dynamic Screen Settle Waiter:** Implements an adaptive polling loop (`waitForScreenSettle`) that verifies desktop visual stability before submitting subsequent inputs.
+- **Compound GUI Macros:** Atomically executes multi-step interaction plans (`executeGuiMacro`) with a single consolidated HITL permission check and consolidated visual diffing.
+
+### 7.4 Desktop CUA Skills Catalog, Parameterized Macro Templates & Visual HUD (`DesktopSkillRegistry`, `CuaHudOverlay`)
+- **Parameterized Macro Templates (`DesktopSkill`):** Immutable, Jackson-serializable procedural macro manifests supporting dynamic parameter substitution (e.g. `{{url}}`, `{{content}}`, `{{query}}`) via regex replacement and strict required parameter validation.
+- **Built-in & Custom Skills Catalog:** Discovers default skills from classpath (`/skills/*.json`: `browser_navigate_url`, `notepad_write_save`, `system_quick_find`) and local disk (`skills/`), supporting runtime registration and disk persistence (`saveDesktopSkill`).
+- **Non-Blocking Visual HUD Overlay (`CuaHudOverlay`):** An undecorated, always-on-top, transparent status banner (`JWindow`) that renders live CUA actions, target coordinates, and visual verification statuses in real-time on physical displays, while remaining 100% headless-safe in CI environments.
+
+---
+
+## 8. Distribution, Testing & Operational Health
 
 - **Executable Fat JAR:** Shaded via `maven-shade-plugin` with `ServicesResourceTransformer` and `ManifestResourceTransformer` into `target/computer-agent-1.0.0-SNAPSHOT.jar`.
-- **Built-In Workflow Catalog:** Packaged into classpath resources under `workflows/`: `research_pipeline.json`, `code_review_pipeline.json`, and `saga_release_pipeline.json`.
-- **Automated Test Coverage:** Comprehensive test suite of **260 automated tests passing with 0 failures and 0 errors**, validating unit, security isolation, concurrency, BSP supersteps, Saga rollbacks, reactive pub/sub, distributed telemetry, and Phase 10.8.2 Enterprise Guardrails.
+- **Built-In Workflow & Skill Catalogs:** Packaged into classpath resources under `workflows/` and `skills/`.
+- **Automated Test Coverage:** Comprehensive test suite of **299 automated tests passing with 0 failures and 0 errors**, validating unit, security isolation, concurrency, BSP supersteps, Saga rollbacks, reactive pub/sub, distributed telemetry, Phase 10.8.2 Enterprise Guardrails, and Phase 10.9 Autonomous Computer-Use Agent upgrades.

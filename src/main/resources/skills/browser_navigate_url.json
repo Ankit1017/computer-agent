@@ -1,0 +1,29 @@
+{
+  "skillId": "browser_navigate_url",
+  "name": "Browser Navigate URL",
+  "description": "Focuses browser window, targets address bar with ctrl+l, types destination URL, presses Enter, and waits for screen settle.",
+  "osPlatform": "ALL",
+  "parameterNames": [
+    "url"
+  ],
+  "steps": [
+    {
+      "action": "focus_window",
+      "windowQuery": "chrome"
+    },
+    {
+      "action": "hotkey",
+      "hotkey": "ctrl+l"
+    },
+    {
+      "action": "type",
+      "text": "{{url}}",
+      "clearFirst": true,
+      "pressEnter": true
+    },
+    {
+      "action": "settle",
+      "waitMs": 3000
+    }
+  ]
+}

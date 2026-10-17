@@ -126,7 +126,7 @@ Agents are declaratively specified in [`src/main/resources/agents.json`](src/mai
 3. **`web`**: `searchWeb`, `readWebPage`, `analyzeWebPage`, `clickWebElement`, `fillWebInput`, `readCurrentWebPage`
 4. **`memory`**: `storeFact`, `searchMemory`
 5. **`context`**: `writeToBlackboard`, `writeToNamespacedBlackboard`, `writeTemporaryData`, `readFromBlackboard`, `readFromNamespacedBlackboard`, `listBlackboardKeys`
-6. **`vision`**: `inspectScreen`, `clickGridId`, `clickGridOffset`, `doubleClickGridId`, `rightClickGridId`, `scrollMouse`, `typeText`, `pressHotkey`
+6. **`vision`**: `inspectScreen`, `inspectScreenRegion`, `clickCoordinates`, `clickGridId`, `clickGridOffset`, `doubleClickGridId`, `rightClickGridId`, `dragAndDrop`, `scrollMouse`, `typeText`, `pressHotkey`, `getClipboardText`, `listDesktopWindows`, `focusWindow`, `controlWindow`, `launchApp`, `clickWindowPoint`, `waitForScreenSettle`, `executeGuiMacro`, `listDesktopSkills`, `executeDesktopSkill`, `saveDesktopSkill`, `configureCuaHud`
 7. **`telemetry`**: `getTelemetrySummary`, `getRecentTraces`
 
 ---
@@ -356,7 +356,7 @@ The project maintains a rigorous, zero-failure test suite:
 ```cmd
 mvn test
 ```
-*Current test suite: **260 tests passing, 0 failures, 0 errors** covering all enterprise packages, DAG validation, typed channel reducers, cooperative HITL suspension, Saga pattern rollbacks, reactive blackboard pub/sub, process tree isolation, OpenTelemetry trace propagation, and Phase 10.8.2 Enterprise Guardrails (loop breaker, file gate, SSRF network guard, prompt sanitizer, and secret redactor).*
+*Current test suite: **299 tests passing, 0 failures, 0 errors** covering all enterprise packages, DAG validation, typed channel reducers, cooperative HITL suspension, Saga pattern rollbacks, reactive blackboard pub/sub, process tree isolation, OpenTelemetry trace propagation, Phase 10.8.2 Enterprise Guardrails (loop breaker, file gate, SSRF network guard, prompt sanitizer, and secret redactor), and Phase 10.9 Autonomous Computer-Use Agent (precision coordinates, window manager, visual diffing, compound macros, desktop CUA skills catalog, and HUD overlay).*
 
 ---
 

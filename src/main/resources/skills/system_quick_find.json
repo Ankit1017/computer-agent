@@ -1,0 +1,25 @@
+{
+  "skillId": "system_quick_find",
+  "name": "System Quick Find",
+  "description": "Triggers quick search with ctrl+f, types query with Enter submission, and waits for screen settle.",
+  "osPlatform": "ALL",
+  "parameterNames": [
+    "query"
+  ],
+  "steps": [
+    {
+      "action": "hotkey",
+      "hotkey": "ctrl+f"
+    },
+    {
+      "action": "type",
+      "text": "{{query}}",
+      "clearFirst": true,
+      "pressEnter": true
+    },
+    {
+      "action": "settle",
+      "waitMs": 2000
+    }
+  ]
+}

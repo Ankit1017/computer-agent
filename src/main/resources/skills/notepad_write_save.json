@@ -1,0 +1,31 @@
+{
+  "skillId": "notepad_write_save",
+  "name": "Notepad Write and Save",
+  "description": "Focuses Notepad, clicks document body, types specified content, and triggers ctrl+s save shortcut.",
+  "osPlatform": "ALL",
+  "parameterNames": [
+    "content"
+  ],
+  "steps": [
+    {
+      "action": "focus_window",
+      "windowQuery": "Notepad"
+    },
+    {
+      "action": "click_window",
+      "windowQuery": "Notepad",
+      "offsetPercentX": 0.5,
+      "offsetPercentY": 0.5
+    },
+    {
+      "action": "type",
+      "text": "{{content}}",
+      "clearFirst": false,
+      "pressEnter": false
+    },
+    {
+      "action": "hotkey",
+      "hotkey": "ctrl+s"
+    }
+  ]
+}

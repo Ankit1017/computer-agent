@@ -3,10 +3,13 @@ package com.agent.tools.vision;
 import com.agent.guardrails.UntrustedContentSanitizer;
 import com.agent.telemetry.SwarmTelemetry;
 import com.agent.tools.terminal.security.SecurityInterceptor;
+import com.agent.tools.vision.hud.CuaHudOverlay;
+import com.agent.tools.vision.model.DesktopSkill;
 import com.agent.tools.vision.model.GuiActionStep;
 import com.agent.tools.vision.model.ScreenDiffResult;
 import com.agent.tools.vision.model.WindowInfo;
 import com.agent.tools.vision.services.CoordinateConverter;
+import com.agent.tools.vision.services.DesktopSkillRegistry;
 import com.agent.tools.vision.services.DesktopWindowService;
 import com.agent.tools.vision.services.ScreenDiffService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -28,11 +31,8 @@ import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Base64;
+import java.util.*;
 import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -45,6 +45,8 @@ public class VisionToolsFacade {
     private final CoordinateConverter coordinateConverter;
     private final DesktopWindowService desktopWindowService;
     private final ScreenDiffService screenDiffService;
+    private final DesktopSkillRegistry desktopSkillRegistry;
+    private final CuaHudOverlay cuaHudOverlay;
     private final ObjectMapper objectMapper;
     private boolean verifyActionsVisually = true;
     private static final int GRID_COLS = 10;
@@ -71,6 +73,8 @@ public class VisionToolsFacade {
         this.coordinateConverter = new CoordinateConverter(this.screenSize);
         this.desktopWindowService = new DesktopWindowService(this.coordinateConverter);
         this.screenDiffService = new ScreenDiffService();
+        this.desktopSkillRegistry = new DesktopSkillRegistry();
+        this.cuaHudOverlay = new CuaHudOverlay();
         this.objectMapper = new ObjectMapper();
     }
 
@@ -87,6 +91,10 @@ public class VisionToolsFacade {
     }
 
     public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize, java.awt.datatransfer.Clipboard clipboard, DesktopWindowService desktopWindowService, ScreenDiffService screenDiffService) {
+        this(security, robot, visionModel, screenSize, clipboard, desktopWindowService, screenDiffService, null, null);
+    }
+
+    public VisionToolsFacade(SecurityInterceptor security, Robot robot, ChatLanguageModel visionModel, Dimension screenSize, java.awt.datatransfer.Clipboard clipboard, DesktopWindowService desktopWindowService, ScreenDiffService screenDiffService, DesktopSkillRegistry desktopSkillRegistry, CuaHudOverlay cuaHudOverlay) {
         this.security = security;
         this.robot = robot;
         this.visionModel = visionModel;
@@ -95,6 +103,8 @@ public class VisionToolsFacade {
         this.coordinateConverter = new CoordinateConverter(this.screenSize);
         this.desktopWindowService = (desktopWindowService != null) ? desktopWindowService : new DesktopWindowService(this.coordinateConverter);
         this.screenDiffService = (screenDiffService != null) ? screenDiffService : new ScreenDiffService();
+        this.desktopSkillRegistry = (desktopSkillRegistry != null) ? desktopSkillRegistry : new DesktopSkillRegistry();
+        this.cuaHudOverlay = (cuaHudOverlay != null) ? cuaHudOverlay : new CuaHudOverlay();
         this.objectMapper = new ObjectMapper();
     }
 
@@ -104,6 +114,14 @@ public class VisionToolsFacade {
 
     public ScreenDiffService getScreenDiffService() {
         return screenDiffService;
+    }
+
+    public DesktopSkillRegistry getDesktopSkillRegistry() {
+        return desktopSkillRegistry;
+    }
+
+    public CuaHudOverlay getCuaHudOverlay() {
+        return cuaHudOverlay;
     }
 
     public boolean isVerifyActionsVisually() {
@@ -125,10 +143,10 @@ public class VisionToolsFacade {
         }
     }
 
-    private String wrapWithVisualVerification(Supplier<String> actionExecution) {
+    private String wrapWithVisualVerification(String actionName, String targetCoord, Supplier<String> actionExecution) {
         BufferedImage before = verifyActionsVisually ? captureScreenSafe() : null;
         String result = actionExecution.get();
-        if (before != null) {
+        if (before != null && result != null && !result.startsWith("Error") && !result.startsWith("ACTION REJECTED")) {
             try {
                 if (robot != null) {
                     robot.delay(50);
@@ -137,10 +155,17 @@ public class VisionToolsFacade {
             BufferedImage after = captureScreenSafe();
             if (after != null) {
                 ScreenDiffResult diff = screenDiffService.compare(before, after, coordinateConverter);
-                return result + " " + diff.toVerificationSummary();
+                String verificationSummary = diff.toVerificationSummary();
+                cuaHudOverlay.recordAction(actionName, targetCoord, verificationSummary);
+                return result + " " + verificationSummary;
             }
         }
+        cuaHudOverlay.recordAction(actionName, targetCoord, "NO_DIFF");
         return result;
+    }
+
+    private String wrapWithVisualVerification(Supplier<String> actionExecution) {
+        return wrapWithVisualVerification("ACTION", "N/A", actionExecution);
     }
 
     public int normalizedToPixelX(int normX) {
@@ -702,44 +727,46 @@ public class VisionToolsFacade {
             @P("Number of clicks: 1 for single click, 2 for double click (default: 1)") Integer clickCount) {
         return SwarmTelemetry.executeTool("clickCoordinates",
                 SwarmTelemetry.formatArgs("normX", normX, "normY", normY, "button", button, "clickCount", clickCount),
-                () -> wrapWithVisualVerification(() -> {
+                () -> {
                     if (normX == null || normY == null || normX < 0 || normX > 1000 || normY < 0 || normY > 1000) {
                         return "Error: Coordinates must be between 0 and 1000.";
                     }
-                    String btn = (button != null && !button.isBlank()) ? button.trim().toLowerCase() : "left";
-                    int count = (clickCount != null && clickCount > 0) ? Math.min(clickCount, 3) : 1;
+                    return wrapWithVisualVerification("clickCoordinates", "[" + normX + ", " + normY + "]", () -> {
+                        String btn = (button != null && !button.isBlank()) ? button.trim().toLowerCase() : "left";
+                        int count = (clickCount != null && clickCount > 0) ? Math.min(clickCount, 3) : 1;
 
-                    int mask;
-                    switch (btn) {
-                        case "left" -> mask = InputEvent.BUTTON1_DOWN_MASK;
-                        case "right" -> mask = InputEvent.BUTTON3_DOWN_MASK;
-                        case "middle" -> mask = InputEvent.BUTTON2_DOWN_MASK;
-                        default -> {
-                            return "Error: Invalid mouse button '" + button + "'. Use 'left', 'right', or 'middle'.";
-                        }
-                    }
-
-                    int targetX = normalizedToPixelX(normX);
-                    int targetY = normalizedToPixelY(normY);
-
-                    if (!security.requestPermission("click mouse at", "Normalized (X:" + normX + ", Y:" + normY + ") button=" + btn + " count=" + count)) {
-                        return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
-                    }
-
-                    try {
-                        robot.mouseMove(targetX, targetY);
-                        for (int i = 0; i < count; i++) {
-                            robot.mousePress(mask);
-                            robot.mouseRelease(mask);
-                            if (i < count - 1) {
-                                robot.delay(100);
+                        int mask;
+                        switch (btn) {
+                            case "left" -> mask = InputEvent.BUTTON1_DOWN_MASK;
+                            case "right" -> mask = InputEvent.BUTTON3_DOWN_MASK;
+                            case "middle" -> mask = InputEvent.BUTTON2_DOWN_MASK;
+                            default -> {
+                                return "Error: Invalid mouse button '" + button + "'. Use 'left', 'right', or 'middle'.";
                             }
                         }
-                        return "Clicked " + btn + " button " + count + " time(s) at normalized (" + normX + ", " + normY + ") [pixel: " + targetX + ", " + targetY + "].";
-                    } catch (Exception e) {
-                        return "Error clicking mouse: " + e.getMessage();
-                    }
-                }));
+
+                        int targetX = normalizedToPixelX(normX);
+                        int targetY = normalizedToPixelY(normY);
+
+                        if (!security.requestPermission("click mouse at", "Normalized (X:" + normX + ", Y:" + normY + ") button=" + btn + " count=" + count)) {
+                            return "ACTION REJECTED: User explicitly denied the mouse click. Do not retry this action.";
+                        }
+
+                        try {
+                            robot.mouseMove(targetX, targetY);
+                            for (int i = 0; i < count; i++) {
+                                robot.mousePress(mask);
+                                robot.mouseRelease(mask);
+                                if (i < count - 1) {
+                                    robot.delay(100);
+                                }
+                            }
+                            return "Clicked " + btn + " button " + count + " time(s) at normalized (" + normX + ", " + normY + ") [pixel: " + targetX + ", " + targetY + "].";
+                        } catch (Exception e) {
+                            return "Error clicking mouse: " + e.getMessage();
+                        }
+                    });
+                });
     }
 
     @Tool("Drag and drop from start normalized coordinates to end normalized coordinates [0..1000].")
@@ -1161,114 +1188,14 @@ public class VisionToolsFacade {
                     }
 
                     BufferedImage before = verifyActionsVisually ? captureScreenSafe() : null;
-                    List<String> stepSummaries = new ArrayList<>();
-
-                    for (int i = 0; i < steps.size(); i++) {
-                        GuiActionStep step = steps.get(i);
-                        String act = step.action().trim().toLowerCase().replace("-", "_");
-                        try {
-                            switch (act) {
-                                case "focus_window", "focuswindow", "focus" -> {
-                                    String focusRes = desktopWindowService.focusWindow(step.windowQuery());
-                                    stepSummaries.add("Focused window: '" + step.windowQuery() + "' (" + focusRes + ")");
-                                }
-                                case "control_window", "controlwindow", "control" -> {
-                                    String ctrlRes = desktopWindowService.controlWindow(step.windowQuery(), step.windowAction());
-                                    stepSummaries.add("Controlled window '" + step.windowQuery() + "' (" + step.windowAction() + "): " + ctrlRes);
-                                }
-                                case "click_coordinates", "clickcoordinates", "click" -> {
-                                    int tx = normalizedToPixelX(step.normX());
-                                    int ty = normalizedToPixelY(step.normY());
-                                    String btn = (step.button() != null && !step.button().isBlank()) ? step.button().trim().toLowerCase() : "left";
-                                    int count = (step.clickCount() != null && step.clickCount() > 0) ? Math.min(step.clickCount(), 3) : 1;
-                                    int mask = switch (btn) {
-                                        case "right" -> InputEvent.BUTTON3_DOWN_MASK;
-                                        case "middle" -> InputEvent.BUTTON2_DOWN_MASK;
-                                        default -> InputEvent.BUTTON1_DOWN_MASK;
-                                    };
-                                    robot.mouseMove(tx, ty);
-                                    for (int c = 0; c < count; c++) {
-                                        robot.mousePress(mask);
-                                        robot.mouseRelease(mask);
-                                        if (c < count - 1) robot.delay(100);
-                                    }
-                                    stepSummaries.add("Clicked " + btn + " button " + count + " time(s) at normalized (" + step.normX() + ", " + step.normY() + ")");
-                                }
-                                case "click_window", "clickwindow" -> {
-                                    Optional<WindowInfo> opt = desktopWindowService.findWindow(step.windowQuery());
-                                    if (opt.isEmpty()) {
-                                        stepSummaries.add("Window not found for click: '" + step.windowQuery() + "'");
-                                    } else {
-                                        WindowInfo win = opt.get();
-                                        double ox = (step.offsetPercentX() != null) ? step.offsetPercentX() : 0.5;
-                                        double oy = (step.offsetPercentY() != null) ? step.offsetPercentY() : 0.5;
-                                        int tx = normalizedToPixelX(win.relativePointNormX(ox));
-                                        int ty = normalizedToPixelY(win.relativePointNormY(oy));
-                                        robot.mouseMove(tx, ty);
-                                        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-                                        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-                                        stepSummaries.add("Clicked window [W" + win.markId() + "] '" + win.title() + "' at relative (" + ox + ", " + oy + ")");
-                                    }
-                                }
-                                case "type", "type_text", "typetext", "type_into_field", "typeintofield" -> {
-                                    boolean clear = Boolean.TRUE.equals(step.clearFirst());
-                                    boolean enter = Boolean.TRUE.equals(step.pressEnter());
-                                    internalTypeText(step.text(), clear, enter);
-                                    stepSummaries.add("Typed text (clearFirst=" + clear + ", pressEnter=" + enter + "): \"" + step.text() + "\"");
-                                }
-                                case "hotkey", "press_hotkey", "presshotkey" -> {
-                                    internalPressHotkey(step.hotkey());
-                                    stepSummaries.add("Executed hotkey: " + step.hotkey());
-                                }
-                                case "drag_and_drop", "draganddrop", "drag" -> {
-                                    int sx = normalizedToPixelX(step.normX());
-                                    int sy = normalizedToPixelY(step.normY());
-                                    int ex = normalizedToPixelX(step.endNormX());
-                                    int ey = normalizedToPixelY(step.endNormY());
-                                    robot.mouseMove(sx, sy);
-                                    robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
-                                    robot.delay(50);
-                                    int stepsCount = 15;
-                                    for (int st = 1; st <= stepsCount; st++) {
-                                        double t = (double) st / (double) stepsCount;
-                                        int currX = (int) Math.round(sx + t * (ex - sx));
-                                        int currY = (int) Math.round(sy + t * (ey - sy));
-                                        robot.mouseMove(currX, currY);
-                                        robot.delay(10);
-                                    }
-                                    robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
-                                    stepSummaries.add("Dragged and dropped from (" + step.normX() + ", " + step.normY() + ") to (" + step.endNormX() + ", " + step.endNormY() + ")");
-                                }
-                                case "scroll", "scroll_mouse", "scrollmouse" -> {
-                                    int notches = (step.notches() != null) ? step.notches() : 5;
-                                    robot.mouseWheel(notches);
-                                    stepSummaries.add("Scrolled mouse " + notches + " notches");
-                                }
-                                case "wait", "sleep" -> {
-                                    int waitTime = (step.waitMs() != null && step.waitMs() > 0) ? Math.min(step.waitMs(), 10000) : 100;
-                                    try {
-                                        Thread.sleep(waitTime);
-                                    } catch (InterruptedException ie) {
-                                        Thread.currentThread().interrupt();
-                                    }
-                                    stepSummaries.add("Waited " + waitTime + "ms");
-                                }
-                                case "settle", "wait_for_settle", "waitforscreensettle" -> {
-                                    int settleWait = (step.waitMs() != null && step.waitMs() > 0) ? Math.min(step.waitMs(), 10000) : 3000;
-                                    screenDiffService.waitForScreenSettle(this::captureScreenSafe, coordinateConverter, settleWait, 100);
-                                    stepSummaries.add("Waited for screen settle (" + settleWait + "ms max)");
-                                }
-                            }
-                        } catch (Exception ex) {
-                            stepSummaries.add("Step " + (i + 1) + " (" + step.action() + ") error: " + ex.getMessage());
-                        }
-                    }
+                    List<String> stepSummaries = executeStepsInternal(steps);
 
                     StringBuilder sb = new StringBuilder();
                     sb.append("Macro executed successfully (").append(steps.size()).append(" steps executed):\n");
                     for (int i = 0; i < stepSummaries.size(); i++) {
                         sb.append("  ").append(i + 1).append(". ").append(stepSummaries.get(i)).append("\n");
                     }
+                    String verificationSummary = "[Unverified]";
                     if (before != null) {
                         try {
                             if (robot != null) robot.delay(50);
@@ -1276,10 +1203,244 @@ public class VisionToolsFacade {
                         BufferedImage after = captureScreenSafe();
                         if (after != null) {
                             ScreenDiffResult diff = screenDiffService.compare(before, after, coordinateConverter);
-                            sb.append("\n").append(diff.toVerificationSummary());
+                            verificationSummary = diff.toVerificationSummary();
+                            sb.append("\n").append(verificationSummary);
                         }
                     }
+                    cuaHudOverlay.recordAction("execute_gui_macro", steps.size() + " steps", verificationSummary);
                     return sb.toString().trim();
                 });
+    }
+
+    private List<String> executeStepsInternal(List<GuiActionStep> steps) {
+        List<String> stepSummaries = new ArrayList<>();
+        for (int i = 0; i < steps.size(); i++) {
+            GuiActionStep step = steps.get(i);
+            String act = step.action().trim().toLowerCase().replace("-", "_");
+            try {
+                switch (act) {
+                    case "focus_window", "focuswindow", "focus" -> {
+                        String focusRes = desktopWindowService.focusWindow(step.windowQuery());
+                        stepSummaries.add("Focused window: '" + step.windowQuery() + "' (" + focusRes + ")");
+                    }
+                    case "control_window", "controlwindow", "control" -> {
+                        String ctrlRes = desktopWindowService.controlWindow(step.windowQuery(), step.windowAction());
+                        stepSummaries.add("Controlled window '" + step.windowQuery() + "' (" + step.windowAction() + "): " + ctrlRes);
+                    }
+                    case "click_coordinates", "clickcoordinates", "click" -> {
+                        int tx = normalizedToPixelX(step.normX());
+                        int ty = normalizedToPixelY(step.normY());
+                        String btn = (step.button() != null && !step.button().isBlank()) ? step.button().trim().toLowerCase() : "left";
+                        int count = (step.clickCount() != null && step.clickCount() > 0) ? Math.min(step.clickCount(), 3) : 1;
+                        int mask = switch (btn) {
+                            case "right" -> InputEvent.BUTTON3_DOWN_MASK;
+                            case "middle" -> InputEvent.BUTTON2_DOWN_MASK;
+                            default -> InputEvent.BUTTON1_DOWN_MASK;
+                        };
+                        robot.mouseMove(tx, ty);
+                        for (int c = 0; c < count; c++) {
+                            robot.mousePress(mask);
+                            robot.mouseRelease(mask);
+                            if (c < count - 1) robot.delay(100);
+                        }
+                        stepSummaries.add("Clicked " + btn + " button " + count + " time(s) at normalized (" + step.normX() + ", " + step.normY() + ")");
+                    }
+                    case "click_window", "clickwindow" -> {
+                        Optional<WindowInfo> opt = desktopWindowService.findWindow(step.windowQuery());
+                        if (opt.isEmpty()) {
+                            stepSummaries.add("Window not found for click: '" + step.windowQuery() + "'");
+                        } else {
+                            WindowInfo win = opt.get();
+                            double ox = (step.offsetPercentX() != null) ? step.offsetPercentX() : 0.5;
+                            double oy = (step.offsetPercentY() != null) ? step.offsetPercentY() : 0.5;
+                            int tx = normalizedToPixelX(win.relativePointNormX(ox));
+                            int ty = normalizedToPixelY(win.relativePointNormY(oy));
+                            robot.mouseMove(tx, ty);
+                            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                            robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                            stepSummaries.add("Clicked window [W" + win.markId() + "] '" + win.title() + "' at relative (" + ox + ", " + oy + ")");
+                        }
+                    }
+                    case "type", "type_text", "typetext", "type_into_field", "typeintofield" -> {
+                        boolean clear = Boolean.TRUE.equals(step.clearFirst());
+                        boolean enter = Boolean.TRUE.equals(step.pressEnter());
+                        internalTypeText(step.text(), clear, enter);
+                        stepSummaries.add("Typed text (clearFirst=" + clear + ", pressEnter=" + enter + "): \"" + step.text() + "\"");
+                    }
+                    case "hotkey", "press_hotkey", "presshotkey" -> {
+                        internalPressHotkey(step.hotkey());
+                        stepSummaries.add("Executed hotkey: " + step.hotkey());
+                    }
+                    case "drag_and_drop", "draganddrop", "drag" -> {
+                        int sx = normalizedToPixelX(step.normX());
+                        int sy = normalizedToPixelY(step.normY());
+                        int ex = normalizedToPixelX(step.endNormX());
+                        int ey = normalizedToPixelY(step.endNormY());
+                        robot.mouseMove(sx, sy);
+                        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK);
+                        robot.delay(50);
+                        int stepsCount = 15;
+                        for (int st = 1; st <= stepsCount; st++) {
+                            double t = (double) st / (double) stepsCount;
+                            int currX = (int) Math.round(sx + t * (ex - sx));
+                            int currY = (int) Math.round(sy + t * (ey - sy));
+                            robot.mouseMove(currX, currY);
+                            robot.delay(10);
+                        }
+                        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK);
+                        stepSummaries.add("Dragged and dropped from (" + step.normX() + ", " + step.normY() + ") to (" + step.endNormX() + ", " + step.endNormY() + ")");
+                    }
+                    case "scroll", "scroll_mouse", "scrollmouse" -> {
+                        int notches = (step.notches() != null) ? step.notches() : 5;
+                        robot.mouseWheel(notches);
+                        stepSummaries.add("Scrolled mouse " + notches + " notches");
+                    }
+                    case "wait", "sleep" -> {
+                        int waitTime = (step.waitMs() != null && step.waitMs() > 0) ? Math.min(step.waitMs(), 10000) : 100;
+                        try {
+                            Thread.sleep(waitTime);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
+                        stepSummaries.add("Waited " + waitTime + "ms");
+                    }
+                    case "settle", "wait_for_settle", "waitforscreensettle" -> {
+                        int settleWait = (step.waitMs() != null && step.waitMs() > 0) ? Math.min(step.waitMs(), 10000) : 3000;
+                        screenDiffService.waitForScreenSettle(this::captureScreenSafe, coordinateConverter, settleWait, 100);
+                        stepSummaries.add("Waited for screen settle (" + settleWait + "ms max)");
+                    }
+                }
+            } catch (Exception ex) {
+                stepSummaries.add("Step " + (i + 1) + " (" + step.action() + ") error: " + ex.getMessage());
+            }
+        }
+        return stepSummaries;
+    }
+
+    @Tool("List all available built-in and custom Desktop CUA Skills with their parameters and action counts.")
+    public String listDesktopSkills() {
+        return SwarmTelemetry.executeTool("listDesktopSkills", "{}", () -> {
+            return desktopSkillRegistry.formatCatalog();
+        });
+    }
+
+    @Tool("Execute a parameterized Desktop CUA Skill macro by skillId with dynamic JSON parameters.")
+    public String executeDesktopSkill(
+            @P(value = "The ID of the desktop skill to execute (e.g. 'browser_navigate_url', 'notepad_write_save', 'system_quick_find')", required = true) String skillId,
+            @P(value = "JSON object map containing dynamic parameters matching the skill's required parameterNames, e.g. '{\"url\": \"https://github.com\"}'", required = false) String parametersJson
+    ) {
+        return SwarmTelemetry.executeTool("executeDesktopSkill",
+                SwarmTelemetry.formatArgs("skillId", skillId, "parametersJson", parametersJson),
+                () -> {
+            if (skillId == null || skillId.isBlank()) {
+                return "Error: skillId cannot be empty.";
+            }
+
+            Optional<DesktopSkill> skillOpt = desktopSkillRegistry.getSkill(skillId.trim());
+            if (skillOpt.isEmpty()) {
+                return "Error: Skill '" + skillId + "' not found. Call listDesktopSkills to see available skills.";
+            }
+            DesktopSkill skill = skillOpt.get();
+
+            Map<String, String> params = new HashMap<>();
+            if (parametersJson != null && !parametersJson.isBlank()) {
+                try {
+                    Map<String, Object> rawParams = objectMapper.readValue(parametersJson, new TypeReference<Map<String, Object>>() {});
+                    if (rawParams != null) {
+                        for (Map.Entry<String, Object> entry : rawParams.entrySet()) {
+                            params.put(entry.getKey(), entry.getValue() != null ? String.valueOf(entry.getValue()) : "");
+                        }
+                    }
+                } catch (Exception e) {
+                    return "Error: Failed to parse parametersJson: " + e.getMessage();
+                }
+            }
+
+            List<GuiActionStep> resolvedSteps;
+            try {
+                resolvedSteps = skill.resolveSteps(params);
+            } catch (IllegalArgumentException e) {
+                return "Error: " + e.getMessage();
+            }
+
+            if (!security.requestPermission("execute desktop skill", skill.skillId() + " (" + resolvedSteps.size() + " steps)")) {
+                return "ACTION REJECTED: User explicitly denied desktop skill execution. Do not retry this action.";
+            }
+
+            BufferedImage before = verifyActionsVisually ? captureScreenSafe() : null;
+            List<String> stepSummaries = executeStepsInternal(resolvedSteps);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("Desktop skill '").append(skill.skillId()).append("' executed successfully (").append(resolvedSteps.size()).append(" steps executed):\n");
+            for (int i = 0; i < stepSummaries.size(); i++) {
+                sb.append("  ").append(i + 1).append(". ").append(stepSummaries.get(i)).append("\n");
+            }
+            String verificationSummary = "[Unverified]";
+            if (before != null) {
+                try {
+                    if (robot != null) robot.delay(50);
+                } catch (Exception ignored) {}
+                BufferedImage after = captureScreenSafe();
+                if (after != null) {
+                    ScreenDiffResult diff = screenDiffService.compare(before, after, coordinateConverter);
+                    verificationSummary = diff.toVerificationSummary();
+                    sb.append("\n").append(verificationSummary);
+                }
+            }
+            cuaHudOverlay.recordAction("execute_skill:" + skill.skillId(), resolvedSteps.size() + " steps", verificationSummary);
+            return sb.toString().trim();
+        });
+    }
+
+    @Tool("Register and persist a new custom Desktop CUA Skill manifest JSON.")
+    public String saveDesktopSkill(
+            @P(value = "Full JSON definition of the DesktopSkill (skillId, name, description, osPlatform, parameterNames, steps)", required = true) String skillJson
+    ) {
+        return SwarmTelemetry.executeTool("saveDesktopSkill",
+                SwarmTelemetry.formatArgs("skillJson", skillJson),
+                () -> {
+            if (skillJson == null || skillJson.isBlank()) {
+                return "Error: skillJson cannot be empty.";
+            }
+
+            DesktopSkill skill;
+            try {
+                skill = objectMapper.readValue(skillJson, DesktopSkill.class);
+            } catch (Exception e) {
+                return "Error: Failed to parse skillJson: " + e.getMessage();
+            }
+
+            if (skill.skillId() == null || skill.skillId().isBlank()) {
+                return "Error: skillId is required.";
+            }
+            if (skill.steps() == null || skill.steps().isEmpty()) {
+                return "Error: skill must contain at least one action step.";
+            }
+
+            if (!security.requestPermission("save desktop skill", skill.skillId() + " (" + skill.name() + ")")) {
+                return "ACTION REJECTED: User explicitly denied saving desktop skill. Do not retry this action.";
+            }
+
+            try {
+                desktopSkillRegistry.registerSkill(skill, true);
+                cuaHudOverlay.recordAction("save_skill:" + skill.skillId(), skill.steps().size() + " steps", "SAVED");
+                return "Desktop skill '" + skill.skillId() + "' registered and saved successfully.";
+            } catch (Exception e) {
+                return "Error saving skill: " + e.getMessage();
+            }
+        });
+    }
+
+    @Tool("Configure or toggle the non-blocking visual HUD overlay indicator on desktop.")
+    public String configureCuaHud(
+            @P(value = "Enable (true) or disable (false) the visual HUD overlay. If null, toggles the current state.", required = false) Boolean enabled
+    ) {
+        return SwarmTelemetry.executeTool("configureCuaHud",
+                SwarmTelemetry.formatArgs("enabled", String.valueOf(enabled)),
+                () -> {
+            boolean newState = (enabled != null) ? enabled : !cuaHudOverlay.isEnabled();
+            cuaHudOverlay.setEnabled(newState);
+            return "CUA HUD Overlay configured: " + (newState ? "ENABLED" : "DISABLED") + ". " + cuaHudOverlay.getStatusSnapshot();
+        });
     }
 }
